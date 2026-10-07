@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# Logs / runtime outputs
+*.log
+output/
+uploads/
+data/*.csv
+data/*.xlsx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary / backup files
+*.bak
+*.backup
+*.backup.py
+*_backup.py
+*_broken.py
+
+# Python generated files
+*.egg-info/
+
+# Local runtime files
+runtime_model_usage.txt
+
+# Large CLIP model
+weights/clip/ViT-B-32.pt
+
+weights/clip/ViT-B-32.pt
+
+# Backup files
+*.backup-*
+*_backup_*.py
+*_backup.py
+*_broken.py
+*before_hud_removal.py

@@ -1,0 +1,55 @@
+{
+  "segmentation_model": "D:\\weight_detect\\runs_goat\\goat_seg_sam\\weights\\best.pt",
+  "feature_dataset": "D:\\weight_detect\\goat_rgb_full_pipeline\\rgb_feature_dataset.csv",
+  "pipeline_model": "D:\\weight_detect\\goat_rgb_full_pipeline\\goat_rgb_weight_pipeline.joblib",
+  "num_images": 191,
+  "num_goats": 24,
+  "group_split": {
+    "train": [
+      2,
+      3,
+      6,
+      7,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      22,
+      23,
+      24
+    ],
+    "val": [
+      5,
+      8,
+      9,
+      20
+    ],
+    "test": [
+      1,
+      4,
+      21
+    ]
+  },
+  "24_goat_grouped_oof": {
+    "direct": {
+      "MAE": 18.251963566468266,
+      "RMSE": 20.84559256057493,
+      "MAPE": 54.368513942222386,
+      "R2": 0.09697086219972528
+    },
+    "stacked": {
+      "MAE": 18.2604871924603,
+      "RMSE": 21.106147735698997,
+      "MAPE": 52.73787724583339,
+      "R2": 0.07425532777370414
+    }
+  },
+  "selected_weight_path": "direct",
+  "note": "The RGB body measurements are learned estimates from silhouette features, not direct centimeter-scale 3D measurements. The weight CV is grouped by goat."
+}
