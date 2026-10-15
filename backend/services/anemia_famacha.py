@@ -50,8 +50,17 @@ from backend.services.roboflow_workflow import (
 # MODEL
 # ============================================================
 
-DEFAULT_MODEL = Path(
-    r"D:\weight_detect\runs\famacha\famacha_seg_v1-2\weights\best.pt"
+# Resolve the model path from the repository root, not from a Windows-only
+# absolute path. This file is backend/services/anemia_famacha.py, so parents[2]
+# resolves to the repository root.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+DEFAULT_MODEL = (
+    PROJECT_ROOT
+    / "Anemia"
+    / "goat_eye_detection"
+    / "model"
+    / "famacha_best.pt"
 )
 
 EXPECTED_CLASSES = {
@@ -74,8 +83,19 @@ _model_path: Path | None = None
 # ============================================================
 
 def _path() -> Path:
+    """
+    Return the configured FAMACHA model path.
+
+    GOAT_FAMACHA_SEG_MODEL_PATH may override the repository-relative default.
+    Configure it to an existing .pt file on AWS if the model is stored outside
+    the repository checkout.
+    """
     value = os.getenv("GOAT_FAMACHA_SEG_MODEL_PATH", "").strip()
-    return Path(value) if value else DEFAULT_MODEL
+
+    if value:
+        return Path(value).expanduser().resolve()
+
+    return DEFAULT_MODEL
 
 
 def _load_model():
