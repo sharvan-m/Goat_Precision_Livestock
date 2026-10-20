@@ -10,10 +10,11 @@ scikit-learn
 torch
 torchvision
 ultralytics
-supervision
+supervision==0.27.0
 xgboost
 lightgbm
 openpyxl
 joblib
 requests
 python-dotenv
+inference-sdk

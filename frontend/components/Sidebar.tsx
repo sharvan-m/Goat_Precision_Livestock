@@ -7,9 +7,11 @@ import {
   HeartPulse,
   Database,
   Settings,
+  ScanSearch,
 } from "lucide-react";
 
 const items = [
+  ["/detect", "Goat Detection", ScanSearch],
   ["/analyze", "Analyze", Camera],
   ["/anemia", "Anemia / FAMACHA", HeartPulse],
   ["/records", "Herd Records", Database],

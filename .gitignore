@@ -58,3 +58,7 @@ weights/clip/ViT-B-32.pt
 *_backup.py
 *_broken.py
 *before_hud_removal.py
+*.tsbuildinfo
+side_annotation_*.jpg
+output_verified.jpg
+

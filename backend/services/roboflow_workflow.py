@@ -20,11 +20,18 @@ from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from dotenv import load_dotenv
 from inference_sdk import InferenceHTTPClient
 
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_env_path, override=False)
 
 ROBOFLOW_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com").rstrip("/")
-ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "").strip()
+ROBOFLOW_API_KEY = (
+    os.getenv("ROBOFLOW_API_KEY")
+    or os.getenv("CONJUNCTIVA_ROBOFLOW_API_KEY")
+    or ""
+).strip()
 ROBOFLOW_WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE", "sharvan-m").strip()
 ROBOFLOW_WORKFLOW = os.getenv("ROBOFLOW_WORKFLOW", "general-segmentation-api-51").strip()
 ROBOFLOW_CLASSES = [

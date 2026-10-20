@@ -1,4 +1,4 @@
-﻿"""
+"""
 GoatVision FastAPI backend.
 
 Run from the project root:
@@ -12,6 +12,7 @@ This API expects the existing project folders to remain at the project root:
 """
 
 import base64
+import os
 import shutil
 import subprocess
 import threading
@@ -30,6 +31,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / "backend" / ".env")
@@ -43,7 +45,7 @@ from goat_weight_system.config import (  # noqa: E402
     BEST_MODEL_PATH,
     OUTPUT_DIR,
 )
-from goat_weight_system.detector import GoatDetector  # noqa: E402
+from goat_weight_system.detector import GoatDetector, DetectionResult  # noqa: E402
 from goat_weight_system.tracker import GoatTracker  # noqa: E402
 from goat_weight_system.view_evaluator import BestViewEvaluator  # noqa: E402
 from goat_weight_system.measurement_extractor import MeasurementExtractor  # noqa: E402
@@ -60,18 +62,15 @@ from backend.services.roboflow_workflow import (
     run_goat_workflow,
 )
 from backend.services.conjunctiva_roboflow import (
-    ConjunctivaRoboflowError,
+    MODEL_ID as CONJUNCTIVA_MODEL_ID,
     conjunctiva_is_configured,
     conjunctiva_endpoint,
-    run_conjunctiva_workflow,
 )
+from backend.services.famacha_roboflow import famacha_is_configured
+from backend.services import anemia_pipeline
 from backend.services.side_classifier import (  # noqa: E402
     configured as side_classifier_configured,
     classify as classify_side,
-)
-from backend.services.anemia_famacha import (
-    analyze as analyze_anemia,
-    status as anemia_status,
 )
 
 
@@ -83,7 +82,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://goat-precision-livestock.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -795,82 +794,290 @@ def roboflow_status():
     return {
         "configured": roboflow_is_configured(),
         "endpoint": roboflow_endpoint(),
-        "provider": "Roboflow Workflow",
+        "provider": "Roboflow Serverless Model",
         "note": "API key is read only from the backend environment.",
     }
 
 
+def _annotate_with_side_classification(
+    image: np.ndarray,
+    detections: list[DetectionResult],
+    mask_visualization: np.ndarray | None = None,
+) -> tuple[np.ndarray, list[dict[str, Any]], int, int]:
+    """
+    Annotate goats strictly based on side classification for weight feasibility.
+    - Full-body segmentation mask annotation (like Roboflow's full-body overlay).
+    - Green (0, 220, 0): Right angle / valid side view suitable for weight estimation.
+    - Red (0, 0, 220): Invalid angle (frontal, rear-facing, or heavily occluded/clipped).
+    - Absolutely NO bounding boxes.
+    - Absolutely NO 'goat' text labels on top of the image.
+    """
+    annotated = image.copy()
+    h, w = image.shape[:2]
+    evaluator = BestViewEvaluator()
+
+    # 1. If Roboflow mask_visualization is available, extract precise full-body masks
+    if mask_visualization is not None and len(detections) > 0:
+        if mask_visualization.shape[:2] != (h, w):
+            mask_vis = cv2.resize(mask_visualization, (w, h))
+        else:
+            mask_vis = mask_visualization
+
+        # Diff between visualization and original image
+        diff = cv2.absdiff(mask_vis, image)
+        diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+        _, raw_changed = cv2.threshold(diff_gray, 15, 255, cv2.THRESH_BINARY)
+
+        # Mask out Roboflow's label badges (magenta/purple [255, 81, 168] BGR and white text inside)
+        b_ch, g_ch, r_ch = mask_vis[:, :, 0], mask_vis[:, :, 1], mask_vis[:, :, 2]
+        badge_color_mask = (b_ch > 200) & (g_ch < 140) & (r_ch > 120)
+        white_text_mask = (b_ch > 220) & (g_ch > 220) & (r_ch > 220)
+        badge_color_dilated = cv2.dilate(badge_color_mask.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+        badge_pixels = badge_color_mask | (white_text_mask & badge_color_dilated)
+        badge_expanded = cv2.dilate(badge_pixels.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+
+        # Body mask across all goats with tags removed
+        goat_bodies_mask = (raw_changed > 0) & (~badge_expanded)
+
+        if np.any(goat_bodies_mask):
+            y_coords, x_coords = np.where(goat_bodies_mask)
+            centers = [((d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2) for d in detections]
+            det_masks = [np.zeros((h, w), dtype=np.uint8) for _ in detections]
+
+            for y, x in zip(y_coords, x_coords):
+                best_i = None
+                min_dist = float("inf")
+                for i, d in enumerate(detections):
+                    x1, y1, x2, y2 = d.box
+                    if (x1 - 15 <= x <= x2 + 15) and (y1 - 15 <= y <= y2 + 15):
+                        cx, cy = centers[i]
+                        dist = (x - cx) ** 2 + (y - cy) ** 2
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_i = i
+                if best_i is not None:
+                    det_masks[best_i][y, x] = 255
+
+            for i, det in enumerate(detections):
+                if np.any(det_masks[i]):
+                    det.mask = det_masks[i]
+    else:
+        # Fallback for detections lacking mask
+        for det in detections:
+            if det.mask is None:
+                m = np.zeros((h, w), dtype=np.uint8)
+                x1, y1, x2, y2 = det.box.astype(int)
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                ax, ay = max(5, (x2 - x1) // 2), max(5, (y2 - y1) // 2)
+                cv2.ellipse(m, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+                det.mask = m
+
+    predictions = []
+    valid_count = 0
+    invalid_count = 0
+    validity_list = []
+
+    for idx, det in enumerate(detections, start=1):
+        x1, y1, x2, y2 = det.box.astype(int)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+
+        side_eval = evaluator.evaluate(
+            det,
+            (h, w),
+            all_detections=detections,
+            frame=image,
+        )
+
+        is_valid = bool(side_eval.can_estimate_weight)
+        score = round(float(side_eval.view_score), 1)
+        validity_list.append(is_valid)
+
+        if is_valid:
+            valid_count += 1
+        else:
+            invalid_count += 1
+
+        predictions.append({
+            "class": "goat",
+            "confidence": round(float(det.confidence), 4),
+            "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
+            "side_view_score": score,
+            "is_valid_side": is_valid,
+            "side_category": side_eval.category,
+            "rejection_reasons": side_eval.rejection_reasons,
+        })
+
+    # Render clean full-body mask overlays (GREEN for valid side view, RED for invalid angle)
+    overlay = annotated.copy()
+    for det, is_valid in zip(detections, validity_list):
+        color = (0, 220, 0) if is_valid else (0, 0, 220)
+        if det.mask is not None and np.any(det.mask):
+            overlay[det.mask > 0] = color
+
+    # Blend with original image
+    annotated = cv2.addWeighted(overlay, 0.45, annotated, 0.55, 0)
+
+    # Draw smooth contour boundaries around each goat's body mask (no rectangular boxes)
+    for det, is_valid in zip(detections, validity_list):
+        color = (0, 220, 0) if is_valid else (0, 0, 220)
+        if det.mask is not None and np.any(det.mask):
+            contours, _ = cv2.findContours(det.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(annotated, contours, -1, color, 2, cv2.LINE_AA)
+
+    return annotated, predictions, valid_count, invalid_count
+
+
 @app.post("/api/detect/goats")
-async def detect_goats_with_roboflow(file: UploadFile = File(...)):
+async def detect_goats(
+    file: UploadFile = File(...),
+    detector: str = Form("roboflow"),
+):
     allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported image type.")
 
     image_bytes = await file.read()
-
-    try:
-        result = run_goat_workflow(image_bytes)
-    except RoboflowWorkflowError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    # Do not display Roboflow's dense visualization. Build the clean
-    # GoatVision annotation from structured predictions.
-    result["annotated_image"] = _render_model_annotation_only(
-        image_bytes,
-        result.get("predictions", []),
-    )
-
-    source_b64 = base64.b64encode(image_bytes).decode("ascii")
-    result["source_image"] = f"data:image/jpeg;base64,{source_b64}"
-
     image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
-    result["image_width"] = int(image.shape[1]) if image is not None else 0
-    result["image_height"] = int(image.shape[0]) if image is not None else 0
-    result["annotation_source"] = "GoatVision clean annotation"
+    if image is None:
+        raise HTTPException(status_code=400, detail="Unable to decode image.")
+    h, w = image.shape[:2]
+    source_b64 = base64.b64encode(image_bytes).decode("ascii")
+    source_data_url = f"data:image/jpeg;base64,{source_b64}"
 
-    return result
+    if detector == "roboflow":
+        try:
+            result = run_goat_workflow(image_bytes)
+            raw_preds = result.get("predictions", [])
+            rf_dets = []
+            for p in raw_preds:
+                b = p.get("box", {})
+                bx1 = int(b.get("x1", 0))
+                by1 = int(b.get("y1", 0))
+                bx2 = int(b.get("x2", 0))
+                by2 = int(b.get("y2", 0))
+
+                rf_dets.append(DetectionResult(
+                    box=np.array([bx1, by1, bx2, by2]),
+                    confidence=float(p.get("confidence") or 0.85),
+                    class_id=0,
+                    mask=None,
+                ))
+
+            mask_vis_img = None
+            mask_vis_data = result.get("mask_visualization")
+            if mask_vis_data:
+                try:
+                    b64_str = mask_vis_data.split(",")[-1]
+                    mask_vis_bytes = base64.b64decode(b64_str)
+                    mask_vis_img = cv2.imdecode(np.frombuffer(mask_vis_bytes, np.uint8), cv2.IMREAD_COLOR)
+                except Exception:
+                    mask_vis_img = None
+
+            annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(
+                image, rf_dets, mask_visualization=mask_vis_img
+            )
+            _, enc = cv2.imencode(".jpg", annotated)
+            annotated_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
+
+            return {
+                "source_image": source_data_url,
+                "annotated_image": f"data:image/jpeg;base64,{annotated_b64}",
+                "goats_detected": len(predictions),
+                "valid_side_views": valid_count,
+                "invalid_views": invalid_count,
+                "predictions": predictions,
+                "workspace": "roboflow",
+                "workflow": "Roboflow SAM 3",
+                "image_width": w,
+                "image_height": h,
+                "annotation_source": "Side Angle Validated (Green=Valid Side View, Red=Unsuitable Angle)",
+            }
+        except RoboflowWorkflowError as exc:
+            raise HTTPException(status_code=502, detail=f"Roboflow Workflow error: {exc}")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Roboflow detection error: {exc}")
+
+    # Local Custom GoatDetector (YOLO11n-seg)
+    conf_thresh = float(os.getenv("GOAT_MIN_CONFIDENCE", "0.20"))
+    goat_detector = GoatDetector(conf_thresh=conf_thresh)
+    detections = goat_detector.detect(image)
+
+    # Fallback to general animal detector if custom weights found 0 on wild/diverse pasture image
+    if len(detections) == 0:
+        try:
+            from ultralytics import YOLO
+            gen_model = YOLO("weights/yolo26n.pt")
+            gen_res = gen_model.predict(image, conf=conf_thresh, verbose=False)
+            for b in gen_res[0].boxes:
+                cid = int(b.cls[0])
+                if cid in [16, 17, 18, 19, 20]:  # dog, horse, sheep, cow
+                    detections.append(DetectionResult(
+                        box=b.xyxy[0].cpu().numpy(),
+                        confidence=float(b.conf[0]),
+                        class_id=0,
+                        mask=None,
+                    ))
+        except Exception:
+            pass
+
+    annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(image, detections)
+    _, enc = cv2.imencode(".jpg", annotated)
+    annotated_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
+
+    return {
+        "source_image": source_data_url,
+        "annotated_image": f"data:image/jpeg;base64,{annotated_b64}",
+        "goats_detected": len(predictions),
+        "valid_side_views": valid_count,
+        "invalid_views": invalid_count,
+        "predictions": predictions,
+        "workspace": "local",
+        "workflow": "yolo11n-seg (custom)",
+        "image_width": w,
+        "image_height": h,
+        "annotation_source": "Side Angle Validated (Green=Valid, Red=Invalid)",
+    }
 
 
 @app.get("/api/anemia/status")
 def get_anemia_status():
-    """
-    Return the status of the existing FAMACHA model.
-
-    The existing FAMACHA status response is kept unchanged for frontend
-    compatibility.
-    """
-    return anemia_status()
+    """Status of the two-model anemia pipeline (conjunctiva -> FAMACHA)."""
+    return anemia_pipeline.status()
 
 
 @app.get("/api/anemia/conjunctiva/status")
 def get_conjunctiva_status():
     """
-    Return the status of the dedicated Roboflow conjunctiva workflow.
+    Status of the Roboflow conjunctiva model (Model A).
 
     The API key is never returned to the client.
     """
     return {
         "configured": conjunctiva_is_configured(),
         "endpoint": conjunctiva_endpoint(),
-        "provider": "Roboflow Workflow",
-        "note": (
-            "Dedicated conjunctiva workflow. "
-            "API key is read only from the backend environment."
-        ),
+        "model_id": CONJUNCTIVA_MODEL_ID,
+        "provider": "Roboflow Serverless Model",
+        "note": "API key is read only from the backend environment.",
     }
 
 
 @app.post("/api/anemia/analyze")
 async def analyze_anemia_image(
     file: UploadFile = File(...),
+    detector: str = Form("roboflow"),
 ):
     """
-    Run the existing FAMACHA analysis first, then optionally run the
-    dedicated conjunctiva Roboflow workflow.
+    Two-model anemia screening with selectable/comparable conjunctiva detector.
 
-    The conjunctiva workflow is supplementary. A conjunctiva failure never
-    replaces or breaks a successful FAMACHA result.
+    1. Conjunctiva model (Model A) runs according to `detector`:
+       - 'roboflow': hosted instance-segmentation polygon model
+       - 'local': custom-trained local YOLO11n bounding box model
+       - 'compare' / 'both': runs both side-by-side
+    2. Only if a valid conjunctiva is found, the Roboflow FAMACHA model
+       (Model B) runs.
+    3. No local famacha_best.pt fallback. No detection -> no score.
     """
     allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     suffix = Path(file.filename or "").suffix.lower()
@@ -889,68 +1096,14 @@ async def analyze_anemia_image(
             detail="Uploaded image is empty.",
         )
 
-    filename = file.filename or "image.jpg"
-
-    # ------------------------------------------------------------------
-    # 1. Existing FAMACHA model
-    # ------------------------------------------------------------------
     try:
-        result = analyze_anemia(
-            data,
-            filename=filename,
-        )
+        # The pipeline makes blocking network or local YOLO calls; keep the event loop free.
+        return await run_in_threadpool(anemia_pipeline.analyze, data, detector=detector)
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"FAMACHA analysis failed: {exc}",
+            detail=f"Anemia analysis failed: {exc}",
         ) from exc
-
-    # ------------------------------------------------------------------
-    # 2. Dedicated conjunctiva Roboflow workflow
-    # ------------------------------------------------------------------
-    # Keep this separate from the existing goat detection/video workflow.
-    # If it is not configured or fails, FAMACHA still succeeds.
-    conjunctiva_result: dict[str, Any] = {
-        "configured": conjunctiva_is_configured(),
-        "success": False,
-        "predictions": [],
-        "error": None,
-    }
-
-    if conjunctiva_is_configured():
-        try:
-            rf_result = run_conjunctiva_workflow(data)
-
-            if isinstance(rf_result, dict):
-                conjunctiva_result.update(rf_result)
-                conjunctiva_result["configured"] = True
-                conjunctiva_result["success"] = True
-                conjunctiva_result["error"] = None
-            else:
-                conjunctiva_result["error"] = (
-                    "Conjunctiva workflow returned an invalid response."
-                )
-
-        except ConjunctivaRoboflowError as exc:
-            conjunctiva_result["error"] = str(exc)
-        except Exception as exc:
-            conjunctiva_result["error"] = (
-                f"Conjunctiva workflow failed: {exc}"
-            )
-    else:
-        conjunctiva_result["error"] = (
-            "Conjunctiva Roboflow workflow is not configured."
-        )
-
-    # ------------------------------------------------------------------
-    # 3. Preserve the existing FAMACHA response and append conjunctiva
-    # ------------------------------------------------------------------
-    result["conjunctiva"] = conjunctiva_result
-    result["conjunctiva_workflow_configured"] = (
-        conjunctiva_is_configured()
-    )
-
-    return result
 
 
 @app.get("/api/health")
@@ -966,7 +1119,9 @@ def health():
         "bcs_available": False,
         "roboflow_configured": roboflow_is_configured(),
         "conjunctiva_roboflow_configured": conjunctiva_is_configured(),
-        "conjunctiva_model_id": "segmentation_conjunctiva-rdlmb/3",
+        "conjunctiva_model_id": os.getenv("CONJUNCTIVA_ROBOFLOW_MODEL_ID", ""),
+        "famacha_roboflow_configured": famacha_is_configured(),
+        "famacha_model_id": os.getenv("FAMACHA_ROBOFLOW_MODEL_ID", ""),
         "ffmpeg_available": shutil.which("ffmpeg") is not None,
     }
 
