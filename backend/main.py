@@ -806,17 +806,17 @@ def _annotate_with_side_classification(
 ) -> tuple[np.ndarray, list[dict[str, Any]], int, int]:
     """
     Annotate goats strictly based on side classification for weight feasibility.
-    - Full-body segmentation mask annotation (Roboflow's SAM masks).
-    - Green (0, 220, 0): Right angle / valid side view suitable for weight estimation.
-    - Blue (235, 120, 20): Other angle / non-side profile / occluded.
+    - Full-body segmentation mask annotation (smooth semi-transparent fill).
+    - Light Green (80, 230, 95): Right angle / valid full side view suitable for weight estimation.
+    - Red (40, 40, 220): Unsuitable angle / non-side profile / occluded / clipped.
     - Absolutely NO bounding boxes.
+    - Absolutely NO outline borders.
     - Absolutely NO 'goat' text labels on top of the image.
     """
     annotated = image.copy()
     h, w = image.shape[:2]
-    evaluator = BestViewEvaluator(score_thresh_acceptable=50.0, max_overlap_iou=0.35)
 
-    # Fallback for detections lacking mask
+    # Ensure all detections have a valid mask
     for det in detections:
         if det.mask is None:
             m = np.zeros((h, w), dtype=np.uint8)
@@ -826,31 +826,93 @@ def _annotate_with_side_classification(
             cv2.ellipse(m, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
             det.mask = m
 
+    all_masks = [det.mask for det in detections]
+    all_boxes = [det.box.astype(float) for det in detections]
+
     predictions = []
     valid_count = 0
     other_count = 0
     validity_list = []
 
-    for idx, det in enumerate(detections, start=1):
+    for i, det in enumerate(detections):
         x1, y1, x2, y2 = det.box.astype(int)
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w, x2), min(h, y2)
+        box_w = max(1, x2 - x1)
+        box_h = max(1, y2 - y1)
+        box_area = box_w * box_h
 
-        side_eval = evaluator.evaluate(
-            det,
-            (h, w),
-            all_detections=detections,
-            frame=image,
-        )
+        reasons = []
 
-        is_valid = bool(side_eval.can_estimate_weight)
-        score = round(float(side_eval.view_score), 1)
+        # 1. Border clipping check: goat must not be truncated at image margins
+        if x1 <= 6 or y1 <= 6 or x2 >= w - 6 or y2 >= h - 6:
+            reasons.append("Clipped at image border (body incomplete)")
+
+        # 2. Minimum size / resolution for biometric weight estimation
+        if (box_area / float(w * h) < 0.03) or (box_w < 90) or (box_h < 110):
+            reasons.append("Too small / distant for weight estimation")
+
+        # 3. Occlusion by another goat:
+        m1 = det.mask > 0
+        m1_sum = float(m1.sum())
+        if m1_sum > 0:
+            max_occ = 0.0
+            for j, other_m in enumerate(all_masks):
+                if i == j or other_m is None:
+                    continue
+                overlap = np.logical_and(m1, other_m > 0).sum()
+                if overlap > 0:
+                    occ = overlap / m1_sum
+                    if occ > max_occ:
+                        max_occ = occ
+            if max_occ > 0.12:
+                reasons.append(f"Occluded by overlapping animal ({int(max_occ * 100)}%)")
+
+        # 4. Foreground blocking: another animal standing in front
+        for j, ob in enumerate(all_boxes):
+            if i == j:
+                continue
+            ix1, iy1 = max(float(x1), ob[0]), max(float(y1), ob[1])
+            ix2, iy2 = min(float(x2), ob[2]), min(float(y2), ob[3])
+            if ix2 > ix1 and iy2 > iy1:
+                inter = (ix2 - ix1) * (iy2 - iy1)
+                if inter / float(box_area) > 0.25:
+                    # If other animal's base is lower (closer to camera), it blocks the view
+                    if ob[3] > float(y2) + 10:
+                        reasons.append("Blocked by foreground animal")
+                        break
+
+        # 5. Side-view orientation & Torso profile:
+        # A valid side profile has horizontal torso elongation (shoulder-to-rump visible).
+        # In frontal/rear views, the torso is narrow and vertically elongated.
+        y_coords, x_coords = np.where(m1)
+        if len(y_coords) > 50:
+            y_min, y_max = y_coords.min(), y_coords.max()
+            torso_cutoff = y_min + int(0.70 * (y_max - y_min))
+            torso_m = m1.copy()
+            torso_m[torso_cutoff:, :] = 0
+            ty, tx = np.where(torso_m)
+            if len(tx) > 30:
+                tw = tx.max() - tx.min()
+                th = ty.max() - ty.min()
+                torso_aspect = tw / max(th, 1)
+                if torso_aspect < 0.95:
+                    reasons.append(f"Frontal/vertical profile (Torso aspect {torso_aspect:.2f})")
+            else:
+                reasons.append("Torso undefined")
+        else:
+            reasons.append("Mask too small for biometric measurement")
+
+        is_valid = (len(reasons) == 0)
+        score = 92.0 if is_valid else max(15.0, 75.0 - len(reasons) * 20.0)
         validity_list.append(is_valid)
 
         if is_valid:
             valid_count += 1
+            category = "VALID SIDE VIEW"
         else:
             other_count += 1
+            category = "INVALID ANGLE"
 
         predictions.append({
             "class": "goat",
@@ -858,11 +920,11 @@ def _annotate_with_side_classification(
             "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
             "side_view_score": score,
             "is_valid_side": is_valid,
-            "side_category": side_eval.category,
-            "rejection_reasons": side_eval.rejection_reasons,
+            "side_category": category,
+            "rejection_reasons": reasons,
         })
 
-    # Render clean full-body mask overlays (LIGHT GREEN for valid side view, RED for other angle)
+    # Render clean full-body mask overlays (LIGHT GREEN for valid side view, RED for invalid angle)
     # NO outline borders around the goats - just the smooth transparent mask fill
     overlay = annotated.copy()
     LIGHT_GREEN_BGR = (80, 230, 95)  # Light green (BGR)
