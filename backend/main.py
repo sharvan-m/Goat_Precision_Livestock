@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
+import pycocotools.mask as mask_util
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -802,79 +803,32 @@ def roboflow_status():
 def _annotate_with_side_classification(
     image: np.ndarray,
     detections: list[DetectionResult],
-    mask_visualization: np.ndarray | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], int, int]:
     """
     Annotate goats strictly based on side classification for weight feasibility.
-    - Full-body segmentation mask annotation (like Roboflow's full-body overlay).
+    - Full-body segmentation mask annotation (Roboflow's SAM masks).
     - Green (0, 220, 0): Right angle / valid side view suitable for weight estimation.
-    - Red (0, 0, 220): Invalid angle (frontal, rear-facing, or heavily occluded/clipped).
+    - Blue (235, 120, 20): Other angle / non-side profile / occluded.
     - Absolutely NO bounding boxes.
     - Absolutely NO 'goat' text labels on top of the image.
     """
     annotated = image.copy()
     h, w = image.shape[:2]
-    evaluator = BestViewEvaluator()
+    evaluator = BestViewEvaluator(score_thresh_acceptable=50.0, max_overlap_iou=0.35)
 
-    # 1. If Roboflow mask_visualization is available, extract precise full-body masks
-    if mask_visualization is not None and len(detections) > 0:
-        if mask_visualization.shape[:2] != (h, w):
-            mask_vis = cv2.resize(mask_visualization, (w, h))
-        else:
-            mask_vis = mask_visualization
-
-        # Diff between visualization and original image
-        diff = cv2.absdiff(mask_vis, image)
-        diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-        _, raw_changed = cv2.threshold(diff_gray, 15, 255, cv2.THRESH_BINARY)
-
-        # Mask out Roboflow's label badges (magenta/purple [255, 81, 168] BGR and white text inside)
-        b_ch, g_ch, r_ch = mask_vis[:, :, 0], mask_vis[:, :, 1], mask_vis[:, :, 2]
-        badge_color_mask = (b_ch > 200) & (g_ch < 140) & (r_ch > 120)
-        white_text_mask = (b_ch > 220) & (g_ch > 220) & (r_ch > 220)
-        badge_color_dilated = cv2.dilate(badge_color_mask.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
-        badge_pixels = badge_color_mask | (white_text_mask & badge_color_dilated)
-        badge_expanded = cv2.dilate(badge_pixels.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
-
-        # Body mask across all goats with tags removed
-        goat_bodies_mask = (raw_changed > 0) & (~badge_expanded)
-
-        if np.any(goat_bodies_mask):
-            y_coords, x_coords = np.where(goat_bodies_mask)
-            centers = [((d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2) for d in detections]
-            det_masks = [np.zeros((h, w), dtype=np.uint8) for _ in detections]
-
-            for y, x in zip(y_coords, x_coords):
-                best_i = None
-                min_dist = float("inf")
-                for i, d in enumerate(detections):
-                    x1, y1, x2, y2 = d.box
-                    if (x1 - 15 <= x <= x2 + 15) and (y1 - 15 <= y <= y2 + 15):
-                        cx, cy = centers[i]
-                        dist = (x - cx) ** 2 + (y - cy) ** 2
-                        if dist < min_dist:
-                            min_dist = dist
-                            best_i = i
-                if best_i is not None:
-                    det_masks[best_i][y, x] = 255
-
-            for i, det in enumerate(detections):
-                if np.any(det_masks[i]):
-                    det.mask = det_masks[i]
-    else:
-        # Fallback for detections lacking mask
-        for det in detections:
-            if det.mask is None:
-                m = np.zeros((h, w), dtype=np.uint8)
-                x1, y1, x2, y2 = det.box.astype(int)
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                ax, ay = max(5, (x2 - x1) // 2), max(5, (y2 - y1) // 2)
-                cv2.ellipse(m, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
-                det.mask = m
+    # Fallback for detections lacking mask
+    for det in detections:
+        if det.mask is None:
+            m = np.zeros((h, w), dtype=np.uint8)
+            x1, y1, x2, y2 = det.box.astype(int)
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            ax, ay = max(5, (x2 - x1) // 2), max(5, (y2 - y1) // 2)
+            cv2.ellipse(m, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+            det.mask = m
 
     predictions = []
     valid_count = 0
-    invalid_count = 0
+    other_count = 0
     validity_list = []
 
     for idx, det in enumerate(detections, start=1):
@@ -896,7 +850,7 @@ def _annotate_with_side_classification(
         if is_valid:
             valid_count += 1
         else:
-            invalid_count += 1
+            other_count += 1
 
         predictions.append({
             "class": "goat",
@@ -908,24 +862,27 @@ def _annotate_with_side_classification(
             "rejection_reasons": side_eval.rejection_reasons,
         })
 
-    # Render clean full-body mask overlays (GREEN for valid side view, RED for invalid angle)
+    # Render clean full-body mask overlays (GREEN for valid side view, BLUE for other angle)
     overlay = annotated.copy()
+    GREEN_BGR = (0, 220, 0)
+    BLUE_BGR = (235, 120, 20)
+
     for det, is_valid in zip(detections, validity_list):
-        color = (0, 220, 0) if is_valid else (0, 0, 220)
+        color = GREEN_BGR if is_valid else BLUE_BGR
         if det.mask is not None and np.any(det.mask):
             overlay[det.mask > 0] = color
 
-    # Blend with original image
-    annotated = cv2.addWeighted(overlay, 0.45, annotated, 0.55, 0)
+    # Blend with original image with Roboflow's smooth 0.38 opacity
+    annotated = cv2.addWeighted(overlay, 0.38, annotated, 0.62, 0)
 
-    # Draw smooth contour boundaries around each goat's body mask (no rectangular boxes)
+    # Draw smooth anti-aliased contour boundaries around each goat's body mask (no rectangular boxes)
     for det, is_valid in zip(detections, validity_list):
-        color = (0, 220, 0) if is_valid else (0, 0, 220)
+        color = GREEN_BGR if is_valid else BLUE_BGR
         if det.mask is not None and np.any(det.mask):
             contours, _ = cv2.findContours(det.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(annotated, contours, -1, color, 2, cv2.LINE_AA)
 
-    return annotated, predictions, valid_count, invalid_count
+    return annotated, predictions, valid_count, other_count
 
 
 @app.post("/api/detect/goats")
@@ -950,33 +907,33 @@ async def detect_goats(
         try:
             result = run_goat_workflow(image_bytes)
             raw_preds = result.get("predictions", [])
+            raw_resp = result.get("raw_response", {})
+            outputs_preds = raw_resp.get("outputs", [{}])[0].get("predictions", {}).get("predictions", [])
+
             rf_dets = []
-            for p in raw_preds:
+            for i, p in enumerate(raw_preds):
                 b = p.get("box", {})
-                bx1 = int(b.get("x1", 0))
-                by1 = int(b.get("y1", 0))
-                bx2 = int(b.get("x2", 0))
-                by2 = int(b.get("y2", 0))
+                bx1 = int(round(float(b.get("x1", 0))))
+                by1 = int(round(float(b.get("y1", 0))))
+                bx2 = int(round(float(b.get("x2", 0))))
+                by2 = int(round(float(b.get("y2", 0))))
+
+                mask = None
+                if i < len(outputs_preds) and outputs_preds[i].get("rle_mask"):
+                    try:
+                        mask = mask_util.decode(outputs_preds[i]["rle_mask"]).astype(np.uint8) * 255
+                    except Exception:
+                        mask = None
 
                 rf_dets.append(DetectionResult(
                     box=np.array([bx1, by1, bx2, by2]),
                     confidence=float(p.get("confidence") or 0.85),
                     class_id=0,
-                    mask=None,
+                    mask=mask,
                 ))
 
-            mask_vis_img = None
-            mask_vis_data = result.get("mask_visualization")
-            if mask_vis_data:
-                try:
-                    b64_str = mask_vis_data.split(",")[-1]
-                    mask_vis_bytes = base64.b64decode(b64_str)
-                    mask_vis_img = cv2.imdecode(np.frombuffer(mask_vis_bytes, np.uint8), cv2.IMREAD_COLOR)
-                except Exception:
-                    mask_vis_img = None
-
             annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(
-                image, rf_dets, mask_visualization=mask_vis_img
+                image, rf_dets
             )
             _, enc = cv2.imencode(".jpg", annotated)
             annotated_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
@@ -992,7 +949,7 @@ async def detect_goats(
                 "workflow": "Roboflow SAM 3",
                 "image_width": w,
                 "image_height": h,
-                "annotation_source": "Side Angle Validated (Green=Valid Side View, Red=Unsuitable Angle)",
+                "annotation_source": "Side Angle Validated (Green=Valid Side View, Blue=Other Angle)",
             }
         except RoboflowWorkflowError as exc:
             raise HTTPException(status_code=502, detail=f"Roboflow Workflow error: {exc}")
