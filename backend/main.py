@@ -844,15 +844,18 @@ def _annotate_with_side_classification(
 
         reasons = []
 
-        # 1. Border clipping check: goat must not be truncated at image margins
-        if x1 <= 6 or y1 <= 6 or x2 >= w - 6 or y2 >= h - 6:
-            reasons.append("Clipped at image border (body incomplete)")
+        # 1. Lateral border clipping: goat's head or rump must not be cut off at the side frame
+        if x1 <= 2 or x2 >= w - 2:
+            reasons.append("Clipped at side border")
+        if y1 <= 1:
+            reasons.append("Clipped at top border")
 
-        # 2. Minimum size / resolution for biometric weight estimation
-        if (box_area / float(w * h) < 0.03) or (box_w < 90) or (box_h < 110):
+        # 2. Relative size: must be large enough in frame for biometric weight estimation
+        area_ratio = box_area / float(w * h)
+        if area_ratio < 0.015 or box_w < (0.08 * w) or box_h < (0.12 * h):
             reasons.append("Too small / distant for weight estimation")
 
-        # 3. Occlusion by another goat:
+        # 3. Direct mask occlusion: another animal's body directly overlapping this mask
         m1 = det.mask > 0
         m1_sum = float(m1.sum())
         if m1_sum > 0:
@@ -865,41 +868,44 @@ def _annotate_with_side_classification(
                     occ = overlap / m1_sum
                     if occ > max_occ:
                         max_occ = occ
-            if max_occ > 0.12:
+            if max_occ > 0.25:
                 reasons.append(f"Occluded by overlapping animal ({int(max_occ * 100)}%)")
 
-        # 4. Foreground blocking: another animal standing in front
-        for j, ob in enumerate(all_boxes):
+        # 4. Severe foreground blocking in herd: another animal in front covers >= 40% of bounding area
+        for j, bj in enumerate(all_boxes):
             if i == j:
                 continue
-            ix1, iy1 = max(float(x1), ob[0]), max(float(y1), ob[1])
-            ix2, iy2 = min(float(x2), ob[2]), min(float(y2), ob[3])
+            ix1, iy1 = max(float(x1), bj[0]), max(float(y1), bj[1])
+            ix2, iy2 = min(float(x2), bj[2]), min(float(y2), bj[3])
             if ix2 > ix1 and iy2 > iy1:
                 inter = (ix2 - ix1) * (iy2 - iy1)
-                if inter / float(box_area) > 0.25:
-                    # If other animal's base is lower (closer to camera), it blocks the view
-                    if ob[3] > float(y2) + 10:
-                        reasons.append("Blocked by foreground animal")
+                if inter / float(box_area) >= 0.40:
+                    if bj[3] > float(y2) + 20:
+                        reasons.append("Severely blocked by foreground animal")
                         break
 
-        # 5. Side-view orientation & Torso profile:
-        # A valid side profile has horizontal torso elongation (shoulder-to-rump visible).
-        # In frontal/rear views, the torso is narrow and vertically elongated.
+        # 5. Flank / Torso Barrel Aspect Ratio (measured between 25% and 75% height):
+        # In a true side view, the body barrel is elongated horizontally (shoulder to rump length visible).
+        # In a frontal or rear view, the torso barrel is narrow (< 1.05 aspect ratio).
         y_coords, x_coords = np.where(m1)
         if len(y_coords) > 50:
-            y_min, y_max = y_coords.min(), y_coords.max()
-            torso_cutoff = y_min + int(0.70 * (y_max - y_min))
-            torso_m = m1.copy()
-            torso_m[torso_cutoff:, :] = 0
-            ty, tx = np.where(torso_m)
-            if len(tx) > 30:
-                tw = tx.max() - tx.min()
-                th = ty.max() - ty.min()
-                torso_aspect = tw / max(th, 1)
-                if torso_aspect < 0.95:
-                    reasons.append(f"Frontal/vertical profile (Torso aspect {torso_aspect:.2f})")
+            ymin, ymax = y_coords.min(), y_coords.max()
+            h_total = ymax - ymin
+            b_top = ymin + int(0.25 * h_total)
+            b_bottom = ymin + int(0.75 * h_total)
+
+            barrel_m = m1.copy()
+            barrel_m[:b_top, :] = False
+            barrel_m[b_bottom:, :] = False
+            by, bx = np.where(barrel_m)
+            if len(bx) > 20:
+                barrel_w = bx.max() - bx.min()
+                barrel_h = by.max() - by.min()
+                barrel_aspect = barrel_w / max(barrel_h, 1)
+                if barrel_aspect < 1.05:
+                    reasons.append(f"Frontal/rear angle (Flank aspect {barrel_aspect:.2f})")
             else:
-                reasons.append("Torso undefined")
+                reasons.append("Body undefined")
         else:
             reasons.append("Mask too small for biometric measurement")
 
