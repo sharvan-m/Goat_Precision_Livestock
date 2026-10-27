@@ -862,25 +862,19 @@ def _annotate_with_side_classification(
             "rejection_reasons": side_eval.rejection_reasons,
         })
 
-    # Render clean full-body mask overlays (GREEN for valid side view, BLUE for other angle)
+    # Render clean full-body mask overlays (LIGHT GREEN for valid side view, RED for other angle)
+    # NO outline borders around the goats - just the smooth transparent mask fill
     overlay = annotated.copy()
-    GREEN_BGR = (0, 220, 0)
-    BLUE_BGR = (235, 120, 20)
+    LIGHT_GREEN_BGR = (80, 230, 95)  # Light green (BGR)
+    RED_BGR = (40, 40, 220)          # Red (BGR)
 
     for det, is_valid in zip(detections, validity_list):
-        color = GREEN_BGR if is_valid else BLUE_BGR
+        color = LIGHT_GREEN_BGR if is_valid else RED_BGR
         if det.mask is not None and np.any(det.mask):
             overlay[det.mask > 0] = color
 
-    # Blend with original image with Roboflow's smooth 0.38 opacity
+    # Blend with original image with smooth 0.38 opacity
     annotated = cv2.addWeighted(overlay, 0.38, annotated, 0.62, 0)
-
-    # Draw smooth anti-aliased contour boundaries around each goat's body mask (no rectangular boxes)
-    for det, is_valid in zip(detections, validity_list):
-        color = GREEN_BGR if is_valid else BLUE_BGR
-        if det.mask is not None and np.any(det.mask):
-            contours, _ = cv2.findContours(det.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(annotated, contours, -1, color, 2, cv2.LINE_AA)
 
     return annotated, predictions, valid_count, other_count
 
@@ -949,7 +943,7 @@ async def detect_goats(
                 "workflow": "Roboflow SAM 3",
                 "image_width": w,
                 "image_height": h,
-                "annotation_source": "Side Angle Validated (Green=Valid Side View, Blue=Other Angle)",
+                "annotation_source": "Side Angle Validated (Light Green=Valid Side View, Red=Invalid Angle)",
             }
         except RoboflowWorkflowError as exc:
             raise HTTPException(status_code=502, detail=f"Roboflow Workflow error: {exc}")

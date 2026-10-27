@@ -65,7 +65,7 @@ export default function GoatDetectionPage() {
         <h1>Goat Detection & Side Classification</h1>
         <p className="page-copy">
           Detects every goat in the frame and evaluates side-angle visibility for precision weight estimation.
-          Valid side angles are annotated in <b>GREEN</b>; other angles in <b>BLUE</b>.
+          Valid side angles are annotated in <b>LIGHT GREEN</b>; invalid/other angles in <b>RED</b>.
         </p>
       </div>
       <div className="status good">
@@ -109,9 +109,9 @@ export default function GoatDetectionPage() {
             <p className="page-copy">
               Color-codes bounding masks:
               <br/>
-              🟢 <b>GREEN</b>: Flank & torso visible at the correct side angle (Weight estimation eligible).
+              🟢 <b>LIGHT GREEN</b>: Flank & torso visible at the correct side angle (Weight estimation eligible).
               <br/>
-              🔵 <b>BLUE</b>: Front-facing, rear-facing, or non-side profile.
+              🔴 <b>RED</b>: Front-facing, rear-facing, or non-side profile.
             </p>
           </div>
           <button
@@ -138,17 +138,17 @@ export default function GoatDetectionPage() {
           </div>
           <div className="stat">
             <div className="stat-label">Valid Side Views</div>
-            <div className="stat-value" style={{ color: "#00c853" }}>
+            <div className="stat-value" style={{ color: "#10b981" }}>
               {result.valid_side_views ?? result.predictions.filter(p => p.is_valid_side).length}
             </div>
             <div className="stat-note">🟢 Ready for weight estimation</div>
           </div>
           <div className="stat">
-            <div className="stat-label">Other Angles</div>
-            <div className="stat-value" style={{ color: "#2563eb" }}>
+            <div className="stat-label">Unsuitable Angles</div>
+            <div className="stat-value" style={{ color: "#ef4444" }}>
               {result.invalid_views ?? result.predictions.filter(p => !p.is_valid_side).length}
             </div>
-            <div className="stat-note">🔵 Frontal / rear / non-side</div>
+            <div className="stat-note">🔴 Frontal / rear / non-side</div>
           </div>
           <div className="stat">
             <div className="stat-label">Side Viability</div>
@@ -166,7 +166,7 @@ export default function GoatDetectionPage() {
           <div>
             <h2>Side-Classification Visualization</h2>
             <p className="page-copy">
-              Color-coded detection: 🟢 Green = Valid side view for weight | 🔵 Blue = Other angle profile.
+              Color-coded detection: 🟢 Light Green = Valid side view for weight | 🔴 Red = Invalid angle.
             </p>
           </div>
           {result.annotated_image && (
@@ -212,7 +212,7 @@ export default function GoatDetectionPage() {
                     position: "absolute",
                     left: `${(cx / result.image_width) * 100}%`,
                     top: `${(top / result.image_height) * 100}%`,
-                    background: p.is_valid_side ? "#00c853" : "#2563eb",
+                    background: p.is_valid_side ? "#10b981" : "#ef4444",
                     color: "#fff",
                     fontWeight: 700,
                   }}
@@ -244,7 +244,7 @@ export default function GoatDetectionPage() {
                 key={i}
                 style={{
                   margin: 0,
-                  borderLeft: `4px solid ${p.is_valid_side ? "#00c853" : "#2563eb"}`,
+                  borderLeft: `4px solid ${p.is_valid_side ? "#10b981" : "#ef4444"}`,
                 }}
               >
                 <div className="result-top">
@@ -252,22 +252,22 @@ export default function GoatDetectionPage() {
                   <span
                     className="status"
                     style={{
-                      background: p.is_valid_side ? "rgba(0, 200, 83, 0.15)" : "rgba(37, 99, 235, 0.15)",
-                      color: p.is_valid_side ? "#00c853" : "#2563eb",
+                      background: p.is_valid_side ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                      color: p.is_valid_side ? "#10b981" : "#ef4444",
                       fontWeight: 700,
                       padding: "4px 8px",
                       borderRadius: 4,
                       fontSize: 11,
                     }}
                   >
-                    {p.is_valid_side ? "VALID SIDE VIEW" : "OTHER ANGLE"}
+                    {p.is_valid_side ? "VALID SIDE VIEW" : "INVALID ANGLE"}
                   </span>
                 </div>
 
                 <div
                   className="result-big"
                   style={{
-                    color: p.is_valid_side ? "#00c853" : "#2563eb",
+                    color: p.is_valid_side ? "#10b981" : "#ef4444",
                     fontSize: 26,
                     margin: "8px 0 4px",
                   }}
@@ -284,7 +284,7 @@ export default function GoatDetectionPage() {
                     style={{
                       width: `${Math.min(100, Math.max(0, p.side_view_score || 0))}%`,
                       height: "100%",
-                      background: p.is_valid_side ? "#00c853" : "#2563eb",
+                      background: p.is_valid_side ? "#10b981" : "#ef4444",
                       borderRadius: 3,
                     }}
                   />
@@ -293,8 +293,8 @@ export default function GoatDetectionPage() {
                 <div className="result-grid">
                   <div className="kv">
                     <span>Weight Feasibility</span>
-                    <b style={{ color: p.is_valid_side ? "#00c853" : "#2563eb" }}>
-                      {p.is_valid_side ? "Ready for Weight" : "Other Profile"}
+                    <b style={{ color: p.is_valid_side ? "#10b981" : "#ef4444" }}>
+                      {p.is_valid_side ? "Ready for Weight" : "Not Usable"}
                     </b>
                   </div>
                   <div className="kv">
@@ -316,7 +316,7 @@ export default function GoatDetectionPage() {
                 {/* Rejection / Angle Notes */}
                 {p.rejection_reasons && p.rejection_reasons.length > 0 && (
                   <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: 11, color: "var(--fg-muted, #999)" }}>
-                    <span style={{ fontWeight: 600, color: "#2563eb" }}>Notes: </span>
+                    <span style={{ fontWeight: 600, color: "#ef4444" }}>Notes: </span>
                     {p.rejection_reasons.join(", ")}
                   </div>
                 )}
