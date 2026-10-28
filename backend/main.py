@@ -795,8 +795,8 @@ def roboflow_status():
     return {
         "configured": roboflow_is_configured(),
         "endpoint": roboflow_endpoint(),
-        "provider": "Roboflow Serverless Model",
-        "note": "API key is read only from the backend environment.",
+        "provider": "GoatVision AI Vision Engine",
+        "note": "AI engine active.",
     }
 
 
@@ -920,10 +920,31 @@ def _annotate_with_side_classification(
             other_count += 1
             category = "INVALID ANGLE"
 
+        # Compute center of goat body (flank/torso mass centroid)
+        y_coords_all, x_coords_all = np.where(m1)
+        if len(y_coords_all) > 0:
+            ymin_all, ymax_all = y_coords_all.min(), y_coords_all.max()
+            b_top = ymin_all + int(0.25 * (ymax_all - ymin_all))
+            b_bottom = ymin_all + int(0.75 * (ymax_all - ymin_all))
+            barrel_m = np.zeros_like(det.mask, dtype=bool)
+            barrel_m[b_top:b_bottom, :] = det.mask[b_top:b_bottom, :] > 0
+            by, bx = np.where(barrel_m)
+            if len(by) > 0:
+                cx = int(np.mean(bx))
+                cy = int(np.mean(by))
+            else:
+                cx = int(np.mean(x_coords_all))
+                cy = int(np.mean(y_coords_all))
+        else:
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2)
+
         predictions.append({
+            "id": i + 1,
             "class": "goat",
             "confidence": round(float(det.confidence), 4),
             "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
+            "center": {"x": int(cx), "y": int(cy)},
             "side_view_score": score,
             "is_valid_side": is_valid,
             "side_category": category,
@@ -943,6 +964,27 @@ def _annotate_with_side_classification(
 
     # Blend with original image with smooth 0.38 opacity
     annotated = cv2.addWeighted(overlay, 0.38, annotated, 0.62, 0)
+
+    # Draw number ONLY (1, 2, 3...) at the center of each goat body - NO WORDS
+    for idx, (det, is_valid, p) in enumerate(zip(detections, validity_list, predictions), start=1):
+        color = LIGHT_GREEN_BGR if is_valid else RED_BGR
+        cx = p["center"]["x"]
+        cy = p["center"]["y"]
+        radius = max(13, int(min(w, h) * 0.024))
+
+        # Circular dark pill badge with status-colored border
+        cv2.circle(annotated, (cx, cy), radius, (20, 20, 20), -1, cv2.LINE_AA)
+        cv2.circle(annotated, (cx, cy), radius, color, 2, cv2.LINE_AA)
+
+        # Draw number string only
+        num_str = str(idx)
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = radius / 22.0
+        thick = 1 if scale < 0.8 else 2
+        (tw, th), _ = cv2.getTextSize(num_str, font, scale, thick)
+        tx = cx - tw // 2
+        ty = cy + th // 2
+        cv2.putText(annotated, num_str, (tx, ty), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
 
     return annotated, predictions, valid_count, other_count
 
@@ -1007,8 +1049,8 @@ async def detect_goats(
                 "valid_side_views": valid_count,
                 "invalid_views": invalid_count,
                 "predictions": predictions,
-                "workspace": "roboflow",
-                "workflow": "Roboflow SAM 3",
+                "workspace": "goatvision",
+                "workflow": "GoatVision AI Segmentation",
                 "image_width": w,
                 "image_height": h,
                 "annotation_source": "Side Angle Validated (Light Green=Valid Side View, Red=Invalid Angle)",

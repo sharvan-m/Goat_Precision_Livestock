@@ -147,7 +147,6 @@ function getClinicalAdvice(score: number | null | undefined) {
 export default function AnemiaPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState("");
-  const [detector, setDetector] = useState<DetectorType>("roboflow");
   const [result, setResult] = useState<AnemiaResult | null>(null);
   const [model, setModel] = useState<ModelStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -207,7 +206,7 @@ export default function AnemiaPage() {
     try {
       const body = new FormData();
       body.append("file", file);
-      body.append("detector", detector);
+      body.append("detector", "roboflow");
 
       const response = await fetch(`${API_BASE}/api/anemia/analyze`, {
         method: "POST",
@@ -265,20 +264,12 @@ export default function AnemiaPage() {
         </div>
 
         <div className="stat">
-          <div className="stat-label">Conjunctiva Detector</div>
+          <div className="stat-label">Conjunctiva Segmentation</div>
           <div className="stat-value" style={{ fontSize: 18 }}>
-            {detector === "roboflow"
-              ? "Roboflow Cloud"
-              : detector === "local"
-              ? "Our Local YOLO11n"
-              : "Compare Both"}
+            AI Engine Active
           </div>
           <div className="stat-note">
-            {detector === "roboflow"
-              ? "Cloud segmentation mask"
-              : detector === "local"
-              ? "Offline bounding box"
-              : "Side-by-side benchmark"}
+            Curved mucosal precision mask
           </div>
         </div>
 
@@ -300,67 +291,6 @@ export default function AnemiaPage() {
           </div>
         </div>
       </div>
-
-      {/* Detector Selection Bar */}
-      <section className="card" style={{ marginBottom: 18, padding: "14px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--green)" }}>
-              Conjunctiva Detection Engine
-            </span>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-              Choose which model detects the eyelid conjunctiva before local FAMACHA scoring (<code>famacha_best.pt</code>).
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className={`btn ${detector === "roboflow" ? "btn-primary" : "btn-ghost"}`}
-              style={{ fontSize: 13, padding: "7px 14px" }}
-              onClick={() => {
-                setDetector("roboflow");
-                setResult(null);
-              }}
-            >
-              ☁️ Roboflow Model
-              <span style={{ fontSize: 10, opacity: 0.8, marginLeft: 4 }}>
-                (Cloud Mask)
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className={`btn ${detector === "local" ? "btn-primary" : "btn-ghost"}`}
-              style={{ fontSize: 13, padding: "7px 14px" }}
-              onClick={() => {
-                setDetector("local");
-                setResult(null);
-              }}
-            >
-              💻 Our Own Model
-              <span style={{ fontSize: 10, opacity: 0.8, marginLeft: 4 }}>
-                (Local YOLO)
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className={`btn ${detector === "compare" ? "btn-primary" : "btn-ghost"}`}
-              style={{ fontSize: 13, padding: "7px 14px" }}
-              onClick={() => {
-                setDetector("compare");
-                setResult(null);
-              }}
-            >
-              🔬 Compare Both
-              <span style={{ fontSize: 10, opacity: 0.8, marginLeft: 4 }}>
-                (Side-by-Side)
-              </span>
-            </button>
-          </div>
-        </div>
-      </section>
 
       {/* Upload and Preview Layout */}
       <div className="result-layout">
@@ -449,355 +379,35 @@ export default function AnemiaPage() {
       {/* FAMACHA RESULTS SECTION */}
       {result && (
         <section style={{ marginTop: 24 }}>
-          {result.comparison ? (
-            /* =================== COMPARISON & EVALUATION VIEW =================== */
-            <div>
-              <div className="section-head">
-                <div>
-                  <div className="eyebrow">HEAD-TO-HEAD BENCHMARK</div>
-                  <h2>Model Evaluation: Roboflow Cloud vs Our Own Model</h2>
-                  <p className="page-copy">
-                    Side-by-side evaluation of both conjunctiva detection engines on the exact same uploaded image.
-                  </p>
-                </div>
-                <span className={`status ${result.comparison.agreement ? "good" : "acceptable"}`}>
-                  {result.comparison.agreement
-                    ? "✓ Both Models Agree"
-                    : "⚠️ Models Disagree"}
-                </span>
+          <div>
+            <div className="section-head">
+              <div>
+                <div className="eyebrow">SCREENING OUTCOME</div>
+                <h2>FAMACHA Score Result</h2>
               </div>
-
-              {/* Side-by-side Image Cards */}
-              <div className="grid-2" style={{ marginBottom: 20 }}>
-                {/* Roboflow Cloud Card */}
-                <div className="card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: 16 }}>☁️ Roboflow Model</h3>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                        Instance Segmentation (Polygon Mask)
-                      </div>
-                    </div>
-                    <span className={`status ${result.comparison.roboflow?.detected ? "good" : "poor"}`}>
-                      {result.comparison.roboflow?.detected ? "Detected" : "Not Detected"}
-                    </span>
-                  </div>
-
-                  <div className="preview" style={{ minHeight: 320 }}>
-                    {result.comparison.roboflow?.annotated_image ? (
-                      <img
-                        src={result.comparison.roboflow.annotated_image}
-                        alt="Roboflow Cloud Detection"
-                      />
-                    ) : (
-                      <div className="empty">
-                        {result.comparison.roboflow?.error || "No Roboflow annotation"}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="result-grid" style={{ marginTop: 14 }}>
-                    <div className="kv">
-                      <span>Confidence</span>
-                      <b>
-                        {typeof result.comparison.roboflow?.best_confidence === "number"
-                          ? `${(result.comparison.roboflow.best_confidence * 100).toFixed(1)}%`
-                          : "—"}
-                      </b>
-                    </div>
-                    <div className="kv">
-                      <span>Inference Latency</span>
-                      <b>
-                        {result.comparison.roboflow?.latency_ms !== null &&
-                        result.comparison.roboflow?.latency_ms !== undefined
-                          ? `${result.comparison.roboflow.latency_ms} ms`
-                          : "—"}
-                      </b>
-                    </div>
-                    <div className="kv">
-                      <span>Model Architecture</span>
-                      <b>YOLO Segmentation (Cloud)</b>
-                    </div>
-                    <div className="kv">
-                      <span>Output Format</span>
-                      <b>Curved Polygon Mask</b>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Our Own Local Model Card */}
-                <div className="card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: 16 }}>💻 Our Own Model</h3>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                        conjunctiva_best.pt (YOLO11n Bounding Box)
-                      </div>
-                    </div>
-                    <span className={`status ${result.comparison.local?.detected ? "good" : "poor"}`}>
-                      {result.comparison.local?.detected ? "Detected" : "Not Detected"}
-                    </span>
-                  </div>
-
-                  <div className="preview" style={{ minHeight: 320 }}>
-                    {result.comparison.local?.annotated_image ? (
-                      <img
-                        src={result.comparison.local.annotated_image}
-                        alt="Our Local YOLO11n Detection"
-                      />
-                    ) : (
-                      <div className="empty">
-                        {result.comparison.local?.error || "No local model annotation"}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="result-grid" style={{ marginTop: 14 }}>
-                    <div className="kv">
-                      <span>Confidence</span>
-                      <b>
-                        {typeof result.comparison.local?.best_confidence === "number"
-                          ? `${(result.comparison.local.best_confidence * 100).toFixed(1)}%`
-                          : "—"}
-                      </b>
-                    </div>
-                    <div className="kv">
-                      <span>Inference Latency</span>
-                      <b>
-                        {result.comparison.local?.latency_ms !== null &&
-                        result.comparison.local?.latency_ms !== undefined
-                          ? `${result.comparison.local.latency_ms} ms (Offline)`
-                          : "—"}
-                      </b>
-                    </div>
-                    <div className="kv">
-                      <span>Model Architecture</span>
-                      <b>YOLO11n Nano (2.59M weights)</b>
-                    </div>
-                    <div className="kv">
-                      <span>Output Format</span>
-                      <b>Bounding Box [x,y,w,h]</b>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Evaluation Table */}
-              <div className="card" style={{ marginBottom: 20 }}>
-                <div className="section-head" style={{ marginTop: 0 }}>
-                  <div>
-                    <h3 style={{ fontSize: 16 }}>Comparative Evaluation Scorecard</h3>
-                    <p className="page-copy">
-                      Technical and operational assessment between the hosted Roboflow model and your local model.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Criteria</th>
-                        <th>☁️ Roboflow Model</th>
-                        <th>💻 Our Own Model (conjunctiva_best.pt)</th>
-                        <th>Analysis / Stage Assessment</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><b>Detection Status</b></td>
-                        <td>
-                          <span className={`status ${result.comparison.roboflow?.detected ? "good" : "poor"}`}>
-                            {result.comparison.roboflow?.detected ? "Detected" : "Not detected"}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`status ${result.comparison.local?.detected ? "good" : "poor"}`}>
-                            {result.comparison.local?.detected ? "Detected" : "Not detected"}
-                          </span>
-                        </td>
-                        <td>
-                          {result.comparison.agreement
-                            ? "High agreement — both models localized the eye conjunctiva."
-                            : "Discrepancy — check lighting or eyelid exposure clarity."}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><b>Confidence Score</b></td>
-                        <td>
-                          <b>
-                            {typeof result.comparison.roboflow?.best_confidence === "number"
-                              ? `${(result.comparison.roboflow.best_confidence * 100).toFixed(1)}%`
-                              : "—"}
-                          </b>
-                        </td>
-                        <td>
-                          <b>
-                            {typeof result.comparison.local?.best_confidence === "number"
-                              ? `${(result.comparison.local.best_confidence * 100).toFixed(1)}%`
-                              : "—"}
-                          </b>
-                        </td>
-                        <td>
-                          {typeof result.comparison.local?.best_confidence === "number" &&
-                          typeof result.comparison.roboflow?.best_confidence === "number"
-                            ? result.comparison.local.best_confidence >= result.comparison.roboflow.best_confidence
-                              ? "Our local model achieved higher detection certainty on this sample."
-                              : "Roboflow achieved higher detection certainty on this sample."
-                            : "Comparative confidence evaluation."}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><b>Localization Precision</b></td>
-                        <td>Instance Segmentation (Curved Polygon Mask)</td>
-                        <td>Object Detection (Rectangular Bounding Box)</td>
-                        <td>Roboflow hugs the exact mucosal curve. Our model identifies the eyelid boundary box.</td>
-                      </tr>
-                      <tr>
-                        <td><b>Execution Speed</b></td>
-                        <td>
-                          {result.comparison.roboflow?.latency_ms ?? "—"} ms (Cloud API)
-                        </td>
-                        <td>
-                          <b style={{ color: "var(--green)" }}>
-                            {result.comparison.local?.latency_ms ?? "—"} ms (Local Edge)
-                          </b>
-                        </td>
-                        <td>
-                          Our local model executes significantly faster without network latency or upload delay.
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><b>Deployment & Privacy</b></td>
-                        <td>Requires Internet connection & API key</td>
-                        <td><b style={{ color: "var(--green)" }}>100% Offline (Zero API, zero cost)</b></td>
-                        <td>Ideal for rural farm/field deployments with poor or no internet connectivity.</td>
-                      </tr>
-                      <tr>
-                        <td><b>Current Maturity Stage</b></td>
-                        <td>Production Hosted Segmentation</td>
-                        <td><span className="status acceptable">Stage 2: Functional Local Detector</span></td>
-                        <td>
-                          Next milestone: train YOLO11-seg on polygon annotations to achieve segmentation precision locally.
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* FAMACHA Diagnostic Outcome Card for Comparison Mode */}
-              <div className="section-head">
-                <div>
-                  <div className="eyebrow">DIAGNOSTIC OUTCOME</div>
-                  <h2>FAMACHA Anemia Score from Evaluated Conjunctiva</h2>
-                </div>
-                <span className={`status ${scored ? riskClass(result.risk_level) : "poor"}`}>
-                  {scored ? result.risk_level : "Score Not Generated"}
-                </span>
-              </div>
-
-              <div className="card" style={{ marginBottom: 20 }}>
-                {scored ? (
-                  <div>
-                    <div className="result-top">
-                      <div>
-                        <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--green)" }}>
-                          DIAGNOSTIC SCORE
-                        </span>
-                        <h3 style={{ margin: "2px 0 0", fontSize: 20 }}>FAMACHA Score</h3>
-                      </div>
-                      <span className={`status ${riskClass(result.risk_level)}`} style={{ fontSize: 13, padding: "5px 12px" }}>
-                        {scoreLabel(score)}
-                      </span>
-                    </div>
-
-                    <div className="result-big" style={{ fontSize: 44, color: "var(--ink)", margin: "14px 0 6px" }}>
-                      Score {score}
-                    </div>
-
-                    {clinical && (
-                      <div style={{ marginBottom: 16, padding: "10px 14px", background: "var(--surface-soft)", borderRadius: 10, border: "1px solid var(--line)" }}>
-                        <b style={{ color: "var(--ink)", fontSize: 13 }}>{clinical.badge}</b>
-                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{clinical.desc}</div>
-                      </div>
-                    )}
-
-                    <div className="result-grid">
-                      <div className="kv">
-                        <span>Scoring Model</span>
-                        <b>famacha_best.pt (Local Classifier)</b>
-                      </div>
-                      <div className="kv">
-                        <span>Classification Confidence</span>
-                        <b>
-                          {typeof confidence === "number" ? `${confidence.toFixed(1)}%` : "Unavailable"}
-                        </b>
-                      </div>
-                      <div className="kv">
-                        <span>Predicted Class</span>
-                        <b>{result.famacha?.class_name || `FAMACHA_${score}`}</b>
-                      </div>
-                      <div className="kv">
-                        <span>Anemia Risk</span>
-                        <b style={{ color: riskClass(result.risk_level) === "poor" ? "var(--red)" : "inherit" }}>
-                          {result.risk_level || "Unknown"}
-                        </b>
-                      </div>
-                    </div>
-
-                    <div className="notice" style={{ marginTop: 14 }}>
-                      {result.message || "FAMACHA score calculated successfully from detected conjunctiva."}
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="result-top">
-                      <h3 style={{ margin: 0, color: "var(--red)" }}>FAMACHA Score</h3>
-                      <span className="status poor">Not Generated</span>
-                    </div>
-                    <div className="result-big" style={{ color: "var(--muted)", fontSize: 30, margin: "14px 0 8px" }}>
-                      No Score
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.5 }}>
-                      Neither model produced a valid conjunctiva region suitable for FAMACHA evaluation.
-                      Please ensure the lower eyelid is clearly pulled down and exposed.
-                    </div>
-                  </div>
-                )}
-              </div>
+              <span className={`status ${scored ? riskClass(result.risk_level) : detected ? "acceptable" : "poor"}`}>
+                {scored ? result.risk_level : detected ? "Conjunctiva Detected" : "Conjunctiva Not Detected"}
+              </span>
             </div>
-          ) : (
-            /* =================== SINGLE MODEL VIEW =================== */
-            <div>
-              <div className="section-head">
-                <div>
-                  <div className="eyebrow">SCREENING OUTCOME</div>
-                  <h2>FAMACHA Score Result</h2>
+
+            <div className="result-layout">
+              {/* Left: Annotated Conjunctiva Image */}
+              <div className="card">
+                <div className="preview">
+                  {result.annotated_image ? (
+                    <img
+                      src={result.annotated_image}
+                      alt="Annotated goat eye conjunctiva"
+                    />
+                  ) : preview ? (
+                    <img src={preview} alt="Goat eye" />
+                  ) : (
+                    <div className="empty">No image returned</div>
+                  )}
                 </div>
-                <span className={`status ${scored ? riskClass(result.risk_level) : detected ? "acceptable" : "poor"}`}>
-                  {scored ? result.risk_level : detected ? "Conjunctiva Detected" : "Conjunctiva Not Detected"}
-                </span>
               </div>
 
-              <div className="result-layout">
-                {/* Left: Annotated Conjunctiva Image */}
-                <div className="card">
-                  <div className="preview">
-                    {result.annotated_image ? (
-                      <img
-                        src={result.annotated_image}
-                        alt="Annotated goat eye conjunctiva"
-                      />
-                    ) : preview ? (
-                      <img src={preview} alt="Goat eye" />
-                    ) : (
-                      <div className="empty">No image returned</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right: PRIMARY FAMACHA SCORE CARD */}
+              {/* Right: PRIMARY FAMACHA SCORE CARD */}
                 <div className="card">
                   {scored ? (
                     <div>
@@ -854,7 +464,7 @@ export default function AnemiaPage() {
 
                           <div className="kv">
                             <span>Conjunctiva</span>
-                            <b>Detected ({result.conjunctiva?.provider || "Roboflow"})</b>
+                            <b>Detected (AI Segmentation Mask)</b>
                           </div>
 
                           <div className="kv">
@@ -898,7 +508,7 @@ export default function AnemiaPage() {
                           </div>
                           <div className="kv">
                             <span>Detector Engine</span>
-                            <b>{result.detector_used || detector}</b>
+                            <b>{result.detector_used || "AI Vision"}</b>
                           </div>
                         </div>
                       </div>
@@ -911,7 +521,6 @@ export default function AnemiaPage() {
                 </div>
               </div>
             </div>
-          )}
         </section>
       )}
     </div>

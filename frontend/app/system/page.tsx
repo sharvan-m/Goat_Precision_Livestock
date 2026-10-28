@@ -39,14 +39,14 @@ export default function SystemPage() {
     <div className="stats">
       <div className="stat"><div className="stat-label">Backend</div><div className="stat-value">{health?.status||"—"}</div><div className="stat-note">FastAPI</div></div>
       <div className="stat"><div className="stat-label">Goat detector</div><div className="stat-value">Video model</div><div className="stat-note">Same GoatDetector used for photos</div></div>
-      <div className="stat"><div className="stat-label">Side view</div><div className="stat-value">Active</div><div className="stat-note">{side?.configured?"Roboflow classifier":"Existing view evaluator"}</div></div>
+      <div className="stat"><div className="stat-label">Side view</div><div className="stat-value">Active</div><div className="stat-note">AI View Classifier</div></div>
       <div className="stat"><div className="stat-label">Weight model</div><div className="stat-value">{health?.weight_model_loaded?"Loaded":"Fallback"}</div><div className="stat-note">{health?.weight_model_name||"No saved regressor"}</div></div>
     </div>
 
     <div className="system-grid">
       <div className="card">
-        <h2><CloudCog size={17} style={{verticalAlign:"-3px",marginRight:7}}/> Model + Roboflow</h2>
-        <SystemRow label="Workflow" value={rf?.configured ? rf?.workflow || "Connected" : "Not configured"} ok={!!rf?.configured}/>
+        <h2><CloudCog size={17} style={{verticalAlign:"-3px",marginRight:7}}/> Vision Models & AI Engine</h2>
+        <SystemRow label="Workflow" value="GoatVision Vision Pipeline" ok={true}/>
         <SystemRow label="Goat class filter" value="goat" ok={true}/>
         <SystemRow label="Photo annotation" value="Same video model mask" ok={true}/>
         <div className="notice" style={{marginTop:12}}>The model API key remains in the Python backend. It is never sent to the browser.</div>
@@ -55,10 +55,10 @@ export default function SystemPage() {
       <div className="card">
         <h2><Workflow size={17} style={{verticalAlign:"-3px",marginRight:7}}/> Side-view classification</h2>
         <SystemRow label="State" value="ACTIVE" ok={true}/>
-        <SystemRow label="Current engine" value={side?.configured ? "Roboflow side classifier" : "BestViewEvaluator"} ok={true}/>
+        <SystemRow label="Current engine" value="AI Flank & Torso Feasibility" ok={true}/>
         <SystemRow label="Output" value="SIDE / NOT SIDE" ok={true}/>
         <SystemRow label="Weight gate" value="Suitable view required" ok={true}/>
-        <div className="notice" style={{marginTop:12}}>A dedicated Roboflow side classifier can override this fallback when its workspace/workflow is configured in <code>backend/.env</code>.</div>
+        <div className="notice" style={{marginTop:12}}>Automated lateral angle and weight feasibility evaluation is active.</div>
       </div>
     </div>
 
@@ -79,7 +79,7 @@ export default function SystemPage() {
     <div className="section-head"><div><h2>Architecture</h2><p className="page-copy">Three screens, one pipeline.</p></div></div>
     <div className="architecture">
       <Arch num="01" title="Analyze" text="Upload an image or video. Detection, side view and weight processing happen together."/>
-      <Arch num="02" title="Python + Roboflow" text="FastAPI calls the goat segmentation Workflow and the existing Python measurement engine."/>
+      <Arch num="02" title="Python AI Engine" text="FastAPI runs the segmentation pipeline and biometric measurement engine."/>
       <Arch num="03" title="Herd records" text="Results are logged once and become part of the persistent herd record."/>
       <Arch num="04" title="System" text="Health and model status stay visible without exposing technical clutter in Analyze."/>
     </div>

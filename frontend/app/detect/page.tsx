@@ -6,9 +6,11 @@ import { postForm } from "@/lib/api";
 import { UploadDropzone } from "@/components/UploadDropzone";
 
 type Prediction = {
+  id?: number;
   class: string;
   confidence: number | null;
   box: { x1: number; y1: number; x2: number; y2: number } | null;
+  center?: { x: number; y: number } | null;
   side_view_score?: number;
   is_valid_side?: boolean;
   side_category?: string;
@@ -31,14 +33,11 @@ type Response = {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function idFor(i: number) { return String(i + 1).padStart(2, "0"); }
-
 export default function GoatDetectionPage() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<Response | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [detector, setDetector] = useState<"roboflow" | "local">("roboflow");
   const [viewMode, setViewMode] = useState<"annotated" | "original">("annotated");
 
   async function scan() {
@@ -49,7 +48,7 @@ export default function GoatDetectionPage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("detector", detector);
+      form.append("detector", "roboflow");
       setResult(await postForm<Response>("/api/detect/goats", form));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Goat detection failed.");
@@ -69,7 +68,7 @@ export default function GoatDetectionPage() {
         </p>
       </div>
       <div className="status good">
-        <CircleCheck size={14}/> {detector === "roboflow" ? "Roboflow SAM 3" : "Local YOLO11"}
+        <CircleCheck size={14}/> Active
       </div>
     </div>
 
@@ -79,35 +78,11 @@ export default function GoatDetectionPage() {
           <UploadDropzone file={file} onFile={setFile}/>
         </div>
         <div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--fg-muted, #888)" }}>
-              DETECTION ENGINE
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                className={`btn ${detector === "roboflow" ? "btn-primary" : "btn-secondary"}`}
-                style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-                onClick={() => setDetector("roboflow")}
-              >
-                Roboflow SAM 3
-              </button>
-              <button
-                type="button"
-                className={`btn ${detector === "local" ? "btn-primary" : "btn-secondary"}`}
-                style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-                onClick={() => setDetector("local")}
-              >
-                Custom Model (Local)
-              </button>
-            </div>
-          </div>
-
-          <div className="feature-card">
+          <div className="feature-card" style={{ marginBottom: 14 }}>
             <div className="feature-icon"><ScanSearch size={17}/></div>
             <h3>Side-View Quality Classification</h3>
             <p className="page-copy">
-              Color-codes bounding masks:
+              Color-codes bounding masks with centered ID numbers (1, 2, 3...):
               <br/>
               🟢 <b>LIGHT GREEN</b>: Flank & torso visible at the correct side angle (Weight estimation eligible).
               <br/>
@@ -117,7 +92,7 @@ export default function GoatDetectionPage() {
           <button
             className="btn btn-primary"
             disabled={!file || busy}
-            style={{ width: "100%", marginTop: 12, opacity: (!file || busy) ? 0.55 : 1 }}
+            style={{ width: "100%", opacity: (!file || busy) ? 0.55 : 1 }}
             onClick={scan}
           >
             {busy ? <><Loader2 size={16} className="spin"/> Analyzing angles…</> : <><Sparkles size={16}/> Detect & classify angles</>}
@@ -157,7 +132,7 @@ export default function GoatDetectionPage() {
                 ? `${Math.round(((result.valid_side_views ?? 0) / result.goats_detected) * 100)}%`
                 : "0%"}
             </div>
-            <div className="stat-note">{result.workflow || "Engine active"}</div>
+            <div className="stat-note">GoatVision AI Vision Pipeline</div>
           </div>
         </div>
 
@@ -199,11 +174,11 @@ export default function GoatDetectionPage() {
               alt="Goat side classification output"
               style={{ maxWidth: "100%", maxHeight: 600, objectFit: "contain", borderRadius: 6, display: "block" }}
             />
-            {/* If showing original without baked-in labels, overlay clean numeric chips */}
+            {/* If showing original without baked-in labels, overlay clean numeric chips at center of body */}
             {(viewMode === "original" || !result.annotated_image) && result.predictions.map((p, i) => {
               if (!p.box) return null;
-              const cx = (p.box.x1 + p.box.x2) / 2;
-              const top = Math.max(2, p.box.y1);
+              const cx = p.center?.x ?? (p.box.x1 + p.box.x2) / 2;
+              const cy = p.center?.y ?? (p.box.y1 + p.box.y2) / 2;
               return (
                 <span
                   key={`${i}-${p.class}`}
@@ -211,13 +186,23 @@ export default function GoatDetectionPage() {
                   style={{
                     position: "absolute",
                     left: `${(cx / result.image_width) * 100}%`,
-                    top: `${(top / result.image_height) * 100}%`,
-                    background: p.is_valid_side ? "#10b981" : "#ef4444",
+                    top: `${(cy / result.image_height) * 100}%`,
+                    transform: "translate(-50%, -50%)",
+                    background: "rgba(20, 20, 20, 0.9)",
+                    border: `2px solid ${p.is_valid_side ? "#10b981" : "#ef4444"}`,
                     color: "#fff",
-                    fontWeight: 700,
+                    fontWeight: 800,
+                    width: 26,
+                    height: 26,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.5)",
                   }}
                 >
-                  #{idFor(i)}
+                  {i + 1}
                 </span>
               );
             })}
@@ -248,7 +233,7 @@ export default function GoatDetectionPage() {
                 }}
               >
                 <div className="result-top">
-                  <h3>Goat #{idFor(i)}</h3>
+                  <h3>Goat {i + 1}</h3>
                   <span
                     className="status"
                     style={{

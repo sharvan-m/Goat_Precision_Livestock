@@ -162,11 +162,11 @@ function ImageOutput({result}:{result:ImageResponse}) {
 
     <div className="output-image-card">
       <div className="output-image-wrap">
-        <img src={result.annotated_image || result.source_image} alt="Roboflow goat segmentation annotation" className="output-image"/>
+        <img src={result.annotated_image || result.source_image} alt="Goat segmentation annotation" className="output-image"/>
       </div>
     </div>
 
-    {result.roboflow_error && <div className="notice warn" style={{marginTop:10}}>Roboflow was unavailable, so the existing Python detector was used as fallback.</div>}
+    {result.roboflow_error && <div className="notice warn" style={{marginTop:10}}>Cloud vision service was unavailable; local detector was used as fallback.</div>}
 
     <div className="section-head result-section-head"><div><h2>Goat results</h2><p className="page-copy">Each result includes side-view status before weight estimation.</p></div></div>
     {result.results.length === 0 ? <div className="card empty">No goat detections were returned.</div> : <div className="goat-result-grid">{result.results.map(r=><ResultCard key={r.goat_id} r={r}/>)}</div>}
