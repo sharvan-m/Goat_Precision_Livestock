@@ -1110,16 +1110,12 @@ def get_anemia_status():
 
 @app.get("/api/anemia/conjunctiva/status")
 def get_conjunctiva_status():
-    """
-    Status of the Roboflow conjunctiva model (Model A).
-
-    The API key is never returned to the client.
-    """
+    """Status of the conjunctiva segmentation model (Model A)."""
     return {
         "configured": conjunctiva_is_configured(),
         "endpoint": conjunctiva_endpoint(),
         "model_id": CONJUNCTIVA_MODEL_ID,
-        "provider": "Roboflow Serverless Model",
+        "provider": "GoatVision AI Vision Engine",
         "note": "API key is read only from the backend environment.",
     }
 

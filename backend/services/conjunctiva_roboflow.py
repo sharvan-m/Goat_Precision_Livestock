@@ -1,11 +1,10 @@
-"""Roboflow Workflow client for Conjunctiva Segmentation.
+"""Vision Workflow client for Conjunctiva Segmentation.
 
 Workflow Details:
-- Name: Segmentation_Conjunctiva vsegmentation_conjunctiva-rdlmb-pqdsd-1-yolo26s-seg-t1 Logic
 - Workspace: sharvan-m
-- Workflow ID: segmentationconjunctiva-vsegmentationconjunctiva-rdlmb-pqdsd-1-yolo26s-seg-t1-logic
-- Run endpoint: https://serverless.roboflow.com/sharvan-m/workflows/segmentationconjunctiva-vsegmentationconjunctiva-rdlmb-pqdsd-1-yolo26s-seg-t1-logic
-- Inputs: image (image)
+- Workflow ID: general-segmentation-api-68
+- Target class: sheep-conjunctiva
+- Endpoint: https://serverless.roboflow.com
 
 Authentication is handled securely via Bearer token in request headers.
 API keys are loaded only from environment variables and never logged or exposed.
@@ -27,19 +26,21 @@ import numpy as np
 # Configuration & Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL_ID = "segmentation_conjunctiva-rdlmb-pqdsd/1"
 DEFAULT_WORKSPACE = "sharvan-m"
-DEFAULT_WORKFLOW_ID = "segmentationconjunctiva-vsegmentationconjunctiva-rdlmb-pqdsd-1-yolo26s-seg-t1-logic"
+DEFAULT_WORKFLOW_ID = "general-segmentation-api-68"
+DEFAULT_MODEL_ID = "general-segmentation-api-68"
 DEFAULT_API_URL = "https://serverless.roboflow.com"
+DEFAULT_CLASSES = "sheep-conjunctiva"
 
+WORKSPACE_NAME = os.getenv("CONJUNCTIVA_ROBOFLOW_WORKSPACE", DEFAULT_WORKSPACE).strip()
+WORKFLOW_ID = os.getenv("CONJUNCTIVA_ROBOFLOW_WORKFLOW_ID", DEFAULT_WORKFLOW_ID).strip()
 MODEL_ID = (
     os.getenv("CONJUNCTIVA_ROBOFLOW_MODEL_ID", "").strip()
     or os.getenv("CONJUNCTIVA_ROBOFLOW_MODEL", "").strip()
     or DEFAULT_MODEL_ID
 )
-WORKSPACE_NAME = os.getenv("CONJUNCTIVA_ROBOFLOW_WORKSPACE", DEFAULT_WORKSPACE).strip()
-WORKFLOW_ID = os.getenv("CONJUNCTIVA_ROBOFLOW_WORKFLOW_ID", DEFAULT_WORKFLOW_ID).strip()
 API_URL = os.getenv("CONJUNCTIVA_ROBOFLOW_API_URL", DEFAULT_API_URL).strip().rstrip("/")
+CONJUNCTIVA_CLASSES = os.getenv("CONJUNCTIVA_CLASS_NAME", DEFAULT_CLASSES).strip()
 
 
 def _get_api_key() -> str:
@@ -50,7 +51,7 @@ def _get_api_key() -> str:
 
 
 class RoboflowWorkflowError(RuntimeError):
-    """Raised when Roboflow workflow execution or response parsing fails."""
+    """Raised when workflow execution or response parsing fails."""
     pass
 
 
@@ -60,12 +61,12 @@ ConjunctivaRoboflowError = RoboflowWorkflowError
 
 def conjunctiva_is_configured() -> bool:
     """Check if the necessary API key and model/workflow are configured."""
-    return bool(_get_api_key() and (MODEL_ID or WORKFLOW_ID))
+    return bool(_get_api_key() and (WORKFLOW_ID or MODEL_ID))
 
 
 def conjunctiva_endpoint() -> str:
-    """Return the Roboflow execution endpoint URL."""
-    return f"{API_URL}/{MODEL_ID}"
+    """Return the vision execution endpoint URL."""
+    return f"{API_URL}/{WORKFLOW_ID or MODEL_ID}"
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +222,9 @@ def run_conjunctiva_workflow(
     max_retries: int = 2,
     backoff_factor: float = 1.0,
 ) -> dict[str, Any]:
-    """Execute the Roboflow Conjunctiva Segmentation Model with retry logic.
+    """Execute the AI Conjunctiva Segmentation Workflow (general-segmentation-api-68).
 
-    Calls the hosted serverless model (segmentation_conjunctiva-rdlmb-pqdsd/1)
-    and falls back to run_workflow if configured.
+    Calls the serverless workflow configured in the workspace sharvan-m.
     """
     client = _get_client()
 
@@ -232,7 +232,7 @@ def run_conjunctiva_workflow(
         raise RoboflowWorkflowError("Empty image bytes submitted for inference.")
 
     temp_path: str | None = None
-    target_model = MODEL_ID
+    target_workflow = WORKFLOW_ID
 
     try:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -240,37 +240,43 @@ def run_conjunctiva_workflow(
             temp_path = tmp.name
 
         raw_result = None
-        # 1. First attempt: call client.infer directly with model_id
+        params = {"classes": CONJUNCTIVA_CLASSES}
+        if parameters:
+            params.update(parameters)
+
+        # 1. Primary execution: run_workflow on general-segmentation-api-68
         try:
-            raw_result = client.infer(temp_path, model_id=target_model)
-        except Exception as infer_exc:
-            # 2. Fallback to run_workflow if configured
-            if WORKFLOW_ID and WORKSPACE_NAME:
-                try:
-                    images_payload = {"image": temp_path}
-                    raw_result = client.run_workflow(
-                        workspace_name=WORKSPACE_NAME,
-                        workflow_id=WORKFLOW_ID,
-                        images=images_payload,
-                        parameters=parameters or {},
-                    )
-                except Exception as wf_exc:
-                    raise RoboflowWorkflowError(
-                        f"Roboflow inference failed: {infer_exc} (workflow fallback also failed: {wf_exc})"
-                    ) from infer_exc
-            else:
-                raise RoboflowWorkflowError(f"Roboflow inference failed: {infer_exc}") from infer_exc
+            raw_result = client.run_workflow(
+                workspace_name=WORKSPACE_NAME,
+                workflow_id=target_workflow,
+                images={"image": temp_path},
+                parameters=params,
+                use_cache=True,
+            )
+        except Exception as wf_exc:
+            # 2. Fallback to client.infer with MODEL_ID if configured
+            try:
+                raw_result = client.infer(temp_path, model_id=MODEL_ID)
+            except Exception as infer_exc:
+                raise RoboflowWorkflowError(
+                    f"AI conjunctiva inference failed: {wf_exc}"
+                ) from wf_exc
 
         # Parse response defensively (handles both client.infer dict and client.run_workflow list)
         raw_predictions: list[Any] = []
         raw_image_meta: dict[str, Any] = {}
+        workflow_annotated_image: str | None = None
 
-        if isinstance(raw_result, dict):
-            raw_predictions = raw_result.get("predictions") or []
-            raw_image_meta = raw_result.get("image") or {}
-        elif isinstance(raw_result, list) and len(raw_result) > 0:
+        if isinstance(raw_result, list) and len(raw_result) > 0:
             entry = raw_result[0]
             if isinstance(entry, dict):
+                annotated_raw = entry.get("annotated_image")
+                if isinstance(annotated_raw, str) and annotated_raw:
+                    if not annotated_raw.startswith("data:image"):
+                        workflow_annotated_image = f"data:image/jpeg;base64,{annotated_raw}"
+                    else:
+                        workflow_annotated_image = annotated_raw
+
                 predictions_block = entry.get("predictions")
                 if isinstance(predictions_block, dict):
                     raw_predictions = predictions_block.get("predictions") or []
@@ -286,15 +292,24 @@ def run_conjunctiva_workflow(
                         elif isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and "confidence" in val[0]:
                             raw_predictions = val
                             break
+        elif isinstance(raw_result, dict):
+            raw_predictions = raw_result.get("predictions") or []
+            raw_image_meta = raw_result.get("image") or {}
+            annotated_raw = raw_result.get("annotated_image")
+            if isinstance(annotated_raw, str) and annotated_raw:
+                if not annotated_raw.startswith("data:image"):
+                    workflow_annotated_image = f"data:image/jpeg;base64,{annotated_raw}"
+                else:
+                    workflow_annotated_image = annotated_raw
 
         normalized_predictions = [_normalize_prediction(p) for p in raw_predictions]
 
-        # Generate Roboflow-style yellow visualization with badge
-        annotated_b64 = _render_annotation(image_bytes, normalized_predictions)
+        # Generate clean yellow visualization with badge
+        annotated_b64 = _render_annotation(image_bytes, normalized_predictions) or workflow_annotated_image
 
         return {
-            "model_id": target_model,
-            "provider": "Roboflow Hosted Model",
+            "model_id": target_workflow,
+            "provider": "GoatVision AI Vision Engine",
             "model_type": "instance_segmentation (polygon mask)",
             "predictions": normalized_predictions,
             "prediction_count": len(normalized_predictions),

@@ -180,7 +180,7 @@ def status() -> dict[str, Any]:
     from backend.services import famacha_local
     from backend.services import famacha_roboflow as fam_rf
     from backend.services.conjunctiva_roboflow import (
-        MODEL_ID as conj_model_id,
+        WORKFLOW_ID as conj_workflow_id,
         conjunctiva_is_configured,
     )
     from backend.services.conjunctiva_local import (
@@ -202,8 +202,8 @@ def status() -> dict[str, Any]:
         "detectors": {
             "roboflow": {
                 "available": conj_ok,
-                "model_id": conj_model_id,
-                "provider": "Roboflow Serverless Cloud",
+                "model_id": conj_workflow_id,
+                "provider": "GoatVision AI Vision Engine",
                 "type": "instance_segmentation (polygon mask)",
                 "expected_class": CONJUNCTIVA_CLASS,
             },
@@ -221,7 +221,7 @@ def status() -> dict[str, Any]:
             "configured": conj_ok or local_conj_ok,
             "roboflow_configured": conj_ok,
             "local_available": local_conj_ok,
-            "model_id": conj_model_id,
+            "model_id": conj_workflow_id,
             "expected_class": CONJUNCTIVA_CLASS,
             "min_confidence": _min_confidence(),
         },
@@ -230,7 +230,7 @@ def status() -> dict[str, Any]:
             "local_available": local_fam_ok,
             "roboflow_configured": rf_fam_ok,
             "model_id": fam_rf.model_id() if rf_fam_ok else "famacha_best.pt",
-            "provider": "Roboflow Cloud" if rf_fam_ok else "Local Classifier (famacha_best.pt)",
+            "provider": "AI Cloud Classifier" if rf_fam_ok else "Local Classifier (famacha_best.pt)",
             "input_mode": fam_rf.input_mode() if rf_fam_ok else "crop",
             "classes": sorted(fam_rf.CLASS_TO_SCORE) if fam_rf.CLASS_TO_SCORE else ["FAMACHA_1", "FAMACHA_2", "FAMACHA_3", "FAMACHA_4"],
             "missing": [] if fam_ok else ["famacha_best.pt not found on disk"],
@@ -294,19 +294,19 @@ def _run_single_detector(
         except Exception as exc:
             out["error"] = f"Local detection failed: {exc}"
             return out
-    else:  # default "roboflow"
-        out["model_id"] = conj.MODEL_ID
-        out["provider"] = "Roboflow Hosted Model"
+    else:  # default AI vision workflow
+        out["model_id"] = conj.WORKFLOW_ID
+        out["provider"] = "GoatVision AI Vision Engine"
         out["model_type"] = "instance_segmentation (polygon mask)"
 
         if not conj.conjunctiva_is_configured():
             out["configured"] = False
-            out["error"] = "CONJUNCTIVA_ROBOFLOW_API_KEY is not configured in backend/.env"
+            out["error"] = "Vision API key is not configured in backend/.env"
             return out
         try:
             res = conj.run_conjunctiva_workflow(image_bytes)
         except Exception as exc:
-            out["error"] = f"Roboflow detection failed: {exc}"
+            out["error"] = f"Conjunctiva detection failed: {exc}"
             return out
 
     elapsed = round((time.perf_counter() - t0) * 1000, 1)
