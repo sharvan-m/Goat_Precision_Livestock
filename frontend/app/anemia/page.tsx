@@ -258,7 +258,7 @@ export default function AnemiaPage() {
         <div className="stat">
           <div className="stat-label">Conjunctiva Detection</div>
           <div className="stat-value" style={{ fontSize: 18 }}>
-            Roboflow Model
+            AI Vision Model
           </div>
           <div className="stat-note">
             Instance Segmentation
@@ -268,7 +268,7 @@ export default function AnemiaPage() {
         <div className="stat">
           <div className="stat-label">FAMACHA Model</div>
           <div className="stat-value" style={{ fontSize: 18 }}>
-            famacha_best.pt
+            FAMACHA Classifier
           </div>
           <div className="stat-note">Clinical Scores 1–5</div>
         </div>
@@ -278,7 +278,7 @@ export default function AnemiaPage() {
           <div className="stat-value" style={{ fontSize: 18 }}>
             {model?.available ? "Ready" : "Checking..."}
           </div>
-          <div className="stat-note">Roboflow + FAMACHA Scoring</div>
+          <div className="stat-note">Active Screening Pipeline</div>
         </div>
 
         <div className="stat">
@@ -459,7 +459,7 @@ export default function AnemiaPage() {
 
                           <div className="kv">
                             <span>Conjunctiva Detector</span>
-                            <b>Roboflow Segmentation Model</b>
+                            <b>Conjunctiva Segmentation Model</b>
                           </div>
 
                           <div className="kv">
@@ -473,7 +473,7 @@ export default function AnemiaPage() {
 
                           <div className="kv">
                             <span>Scoring Model</span>
-                            <b>famacha_best.pt (Scores 1–5)</b>
+                            <b>FAMACHA Scoring Model (Scores 1–5)</b>
                           </div>
                         </div>
                       </div>
@@ -508,7 +508,7 @@ export default function AnemiaPage() {
                           </div>
                           <div className="kv">
                             <span>Detector Engine</span>
-                            <b>{result.detector_used || "Roboflow Conjunctiva Model"}</b>
+                            <b>{result.detector_used || "Conjunctiva Segmentation Model"}</b>
                           </div>
                         </div>
                       </div>

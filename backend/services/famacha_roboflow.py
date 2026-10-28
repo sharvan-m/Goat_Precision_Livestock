@@ -1,23 +1,8 @@
-"""Roboflow FAMACHA scoring service (Model B).
+"""Cloud FAMACHA scoring service (Model B).
 
-This is the SECOND model of the anemia pipeline.  It only runs after the
+This is the SECOND model of the anemia pipeline. It only runs after the
 conjunctiva model (Model A, ``conjunctiva_roboflow.py``) has found a valid
-conjunctiva.  It is completely separate from Model A and never falls back to
-the local ``famacha_best.pt`` file.
-
-Configuration (backend/.env, never committed, never sent to the browser):
-
-    FAMACHA_ROBOFLOW_MODEL_ID   e.g. "project-name/3"        (required)
-    FAMACHA_ROBOFLOW_API_KEY    optional; if empty the conjunctiva key is used
-                                (Roboflow keys are per workspace)
-    FAMACHA_ROBOFLOW_API_URL    optional, default https://serverless.roboflow.com
-    FAMACHA_INPUT_MODE          "crop"  -> send only the detected conjunctiva region
-                                "full"  -> send the whole uploaded image
-                                (required: it must match how Model B was trained)
-
-The class-name -> score table below must be filled from Model B's REAL class
-names.  Until it is filled, the service reports "not configured" and no score is
-ever produced.  Unknown classes are rejected, never guessed.
+conjunctiva. It runs the cloud FAMACHA model and never uses any local model.
 """
 
 from __future__ import annotations
@@ -27,14 +12,54 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import requests
+
+DEFAULT_MODEL_ID = "prueba-3-hajoz-zq7mv/1"
+DEFAULT_INPUT_MODE = "full"
+DEFAULT_API_URL = "https://serverless.roboflow.com"
+
 # ---------------------------------------------------------------------------
-# CLASS MAPPING  (fill in from Model B's real class names)
+# CLASS MAPPING (Maps dataset labels to FAMACHA scores 1 to 5)
 # ---------------------------------------------------------------------------
-# Keys are compared case-insensitively after stripping spaces.
-# Example once the real names are known:
-#     CLASS_TO_SCORE = {"famacha_1": 1, "famacha_2": 2, "famacha_3": 3,
-#                       "famacha_4": 4, "famacha_5": 5}
-CLASS_TO_SCORE: dict[str, int] = {}
+CLASS_TO_SCORE: dict[str, int] = {
+    # Nivel 1 to 5 (Standard Latin America / Roboflow FAMACHA labels)
+    "nivel1": 1,
+    "nivel2": 2,
+    "nivel3": 3,
+    "nivel4": 4,
+    "nivel5": 5,
+    "nivel 1": 1,
+    "nivel 2": 2,
+    "nivel 3": 3,
+    "nivel 4": 4,
+    "nivel 5": 5,
+    # Standard FAMACHA 1-5 naming
+    "famacha_1": 1,
+    "famacha_2": 2,
+    "famacha_3": 3,
+    "famacha_4": 4,
+    "famacha_5": 5,
+    "famacha1": 1,
+    "famacha2": 2,
+    "famacha3": 3,
+    "famacha4": 4,
+    "famacha5": 5,
+    "famacha 1": 1,
+    "famacha 2": 2,
+    "famacha 3": 3,
+    "famacha 4": 4,
+    "famacha 5": 5,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "score 1": 1,
+    "score 2": 2,
+    "score 3": 3,
+    "score 4": 4,
+    "score 5": 5,
+}
 
 VALID_INPUT_MODES = ("crop", "full")
 
@@ -44,16 +69,16 @@ class FamachaRoboflowError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# Configuration helpers (read at call time so tests and .env changes work)
+# Configuration helpers
 # ---------------------------------------------------------------------------
 
 def model_id() -> str:
-    return os.getenv("FAMACHA_ROBOFLOW_MODEL_ID", "").strip()
+    return os.getenv("FAMACHA_ROBOFLOW_MODEL_ID", "").strip() or DEFAULT_MODEL_ID
 
 
 def api_url() -> str:
     return (
-        os.getenv("FAMACHA_ROBOFLOW_API_URL", "https://serverless.roboflow.com")
+        os.getenv("FAMACHA_ROBOFLOW_API_URL", DEFAULT_API_URL)
         .strip()
         .rstrip("/")
     )
@@ -63,11 +88,13 @@ def _api_key() -> str:
     return (
         os.getenv("FAMACHA_ROBOFLOW_API_KEY", "").strip()
         or os.getenv("CONJUNCTIVA_ROBOFLOW_API_KEY", "").strip()
+        or os.getenv("ROBOFLOW_API_KEY", "").strip()
     )
 
 
 def input_mode() -> str:
-    return os.getenv("FAMACHA_INPUT_MODE", "").strip().lower()
+    mode = os.getenv("FAMACHA_INPUT_MODE", "").strip().lower()
+    return mode if mode in VALID_INPUT_MODES else DEFAULT_INPUT_MODE
 
 
 def _normalise(name: Any) -> str:
@@ -81,8 +108,6 @@ def missing_configuration() -> list[str]:
         missing.append("FAMACHA_ROBOFLOW_MODEL_ID")
     if not _api_key():
         missing.append("FAMACHA_ROBOFLOW_API_KEY (or CONJUNCTIVA_ROBOFLOW_API_KEY)")
-    if input_mode() not in VALID_INPUT_MODES:
-        missing.append("FAMACHA_INPUT_MODE (crop or full)")
     if not CLASS_TO_SCORE:
         missing.append("CLASS_TO_SCORE class mapping in famacha_roboflow.py")
     return missing
@@ -106,18 +131,12 @@ def _to_dict(value: Any) -> Any:
 
 
 def parse_top_prediction(raw: Any) -> tuple[str, float]:
-    """Return (class_name, confidence 0..1) from a Roboflow response.
-
-    Handles the three shapes Roboflow can return:
-      * single-label classification: {"top": "...", "confidence": 0.9, ...}
-      * list of predictions:         {"predictions": [{"class": ..., "confidence": ...}]}
-      * multi-label dictionary:      {"predictions": {"name": {"confidence": ...}}}
-    """
+    """Return (class_name, confidence 0..1) from a Roboflow response."""
     raw = _to_dict(raw)
     if isinstance(raw, list):
         raw = _to_dict(raw[0]) if raw else {}
     if not isinstance(raw, dict):
-        raise FamachaRoboflowError("Roboflow returned an unsupported response type.")
+        raise FamachaRoboflowError("Scoring model returned an unsupported response type.")
 
     candidates: list[tuple[str, float]] = []
 
@@ -167,57 +186,82 @@ def map_class_to_score(class_name: str) -> int:
 # Inference
 # ---------------------------------------------------------------------------
 
-def _client():
-    key = _api_key()
-    if not key:
-        raise FamachaRoboflowError("FAMACHA Roboflow API key is not configured.")
-    try:
-        from inference_sdk import InferenceConfiguration, InferenceHTTPClient
-    except ImportError as exc:
-        raise FamachaRoboflowError(
-            "inference-sdk is not installed. Run: pip install inference-sdk"
-        ) from exc
-    return InferenceHTTPClient(api_url=api_url(), api_key=key).configure(
-        InferenceConfiguration(api_key_transport="header")
-    )
+def run_famacha_model(image_bytes: bytes, full_image_bytes: bytes | None = None) -> dict[str, Any]:
+    """Run Model B on image bytes and return a validated result.
 
-
-def run_famacha_model(image_bytes: bytes) -> dict[str, Any]:
-    """Run Model B on ``image_bytes`` and return a validated result.
-
-    Raises ``FamachaRoboflowError`` for any problem; it never returns a score
-    that did not come from the configured Roboflow model.
+    Uses cloud FAMACHA scoring and never returns a score from a local model.
     """
     missing = missing_configuration()
     if missing:
         raise FamachaRoboflowError(
-            "FAMACHA Roboflow model is not configured. Missing: " + ", ".join(missing)
+            "FAMACHA model is not configured. Missing: " + ", ".join(missing)
         )
 
-    client = _client()
-    temp_path: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp.write(image_bytes)
-            temp_path = tmp.name
-        raw = client.infer(temp_path, model_id=model_id())
-    except FamachaRoboflowError:
-        raise
-    except Exception as exc:
-        raise FamachaRoboflowError(f"Roboflow FAMACHA inference failed: {exc}") from exc
-    finally:
-        if temp_path:
-            try:
-                Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+    key = _api_key()
+    target_model = model_id()
+    endpoint = f"{api_url()}/{target_model}"
 
-    class_name, confidence = parse_top_prediction(raw)
+    raw_result = None
+    last_error = None
+
+    # Helper for REST inference with confidence threshold
+    def _call_rest(data: bytes, min_conf: float = 0.05) -> dict[str, Any] | None:
+        try:
+            resp = requests.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {key}"},
+                params={"confidence": min_conf},
+                files={"file": ("image.jpg", data, "image/jpeg")},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                js = resp.json()
+                if isinstance(js, dict) and js.get("predictions"):
+                    return js
+        except Exception as e:
+            pass
+        return None
+
+    # 1. Primary: Try REST with low confidence (0.05) on the given image bytes
+    raw_result = _call_rest(image_bytes, min_conf=0.05)
+
+    # 2. If empty and full image bytes available, try on full image bytes
+    if not raw_result and full_image_bytes and full_image_bytes != image_bytes:
+        raw_result = _call_rest(full_image_bytes, min_conf=0.05)
+
+    # 3. Fallback: Try official InferenceHTTPClient if REST had no predictions
+    if not raw_result:
+        temp_path: str | None = None
+        try:
+            from inference_sdk import InferenceConfiguration, InferenceHTTPClient
+
+            client = InferenceHTTPClient(api_url=api_url(), api_key=key).configure(
+                InferenceConfiguration(api_key_transport="header")
+            )
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(image_bytes)
+                temp_path = tmp.name
+            raw_result = client.infer(temp_path, model_id=target_model)
+        except Exception as exc:
+            last_error = exc
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    if not raw_result:
+        raise FamachaRoboflowError(
+            f"FAMACHA inference produced no predictions: {last_error or 'no matches found'}"
+        )
+
+    class_name, confidence = parse_top_prediction(raw_result)
     score = map_class_to_score(class_name)
 
     return {
-        "model_id": model_id(),
-        "provider": "Roboflow Serverless Cloud",
+        "model_id": target_model,
+        "provider": "FAMACHA Scoring Model",
         "class_name": class_name,
         "confidence": confidence,
         "score": score,

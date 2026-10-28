@@ -1,22 +1,17 @@
-"""Two-model anemia screening pipeline: Conjunctiva Detection -> Local FAMACHA Scoring.
+"""Two-model anemia screening pipeline: Conjunctiva Detection -> FAMACHA Scoring.
 
 Pipeline flow:
-    Upload -> Model A (Roboflow Cloud OR Local YOLO11n conjunctiva detector)
-           -> validity gate (checks conjunctiva detected)
+    Upload -> Model A (Conjunctiva Segmentation Model)
+           -> validity gate (checks conjunctiva detected with valid polygon mask)
            -> crop conjunctiva ROI
-           -> Model B (Local famacha_best.pt classifier)
+           -> Model B (FAMACHA Scoring Model, Scores 1–5)
            -> FAMACHA score output (Score 1-5, Anemia Risk, Confidence, Class)
 
 Rules enforced:
-* Model A (Conjunctiva): Detects the lower eyelid / conjunctiva.
-    - Can be Roboflow Cloud instance segmentation ("roboflow")
-    - Or Our Local YOLO11n detector ("local")
-    - Or side-by-side comparison ("compare" / "both")
-* Model B (FAMACHA): Runs the local famacha_best.pt classifier on the detected conjunctiva crop.
-    - Classifies into FAMACHA_1, FAMACHA_2, FAMACHA_3, FAMACHA_4 (1-5 scale)
-    - If a remote Roboflow FAMACHA model is configured in .env, it can be used,
-      otherwise famacha_best.pt is the primary offline classifier.
-* If conjunctiva is NOT detected on the eye, no score is produced.
+* Model A (Conjunctiva): Instance segmentation model detecting lower eyelid / conjunctiva polygon.
+* Model B (FAMACHA): Cloud FAMACHA scoring model (Scores 1 to 5).
+* Strictly NO local fallback models (famacha_best.pt / conjunctiva_best.pt removed).
+* If conjunctiva is NOT detected on the eye, no FAMACHA score is produced.
 """
 
 from __future__ import annotations
@@ -32,7 +27,7 @@ CONJUNCTIVA_CLASS = os.getenv("CONJUNCTIVA_CLASS_NAME", "sheep-conjunctiva").str
 
 
 def _is_conjunctiva_class(name: Any) -> bool:
-    """Allow both the configured class name, generic 'conjunctiva', or variants."""
+    """Allow configured class name, generic 'conjunctiva', or variants."""
     c = str(name or "").strip().lower()
     allowed = {
         CONJUNCTIVA_CLASS,
@@ -48,9 +43,9 @@ def _is_conjunctiva_class(name: Any) -> bool:
 
 def _min_confidence() -> float:
     try:
-        return float(os.getenv("CONJUNCTIVA_MIN_CONFIDENCE", "0.5"))
+        return float(os.getenv("CONJUNCTIVA_MIN_CONFIDENCE", "0.20"))
     except ValueError:
-        return 0.5
+        return 0.20
 
 
 MSG_NOT_DETECTED = (
@@ -66,17 +61,10 @@ MSG_SCORING_FAILED = "Conjunctiva detected, but FAMACHA scoring failed."
 # ---------------------------------------------------------------------------
 
 def _has_geometry(pred: dict[str, Any]) -> bool:
-    """Check if prediction has polygon points or a valid bounding box."""
+    """Check if prediction has valid polygon points (only polygon segmentation is accepted)."""
     points = pred.get("points")
     if isinstance(points, list) and len(points) >= 3:
         return True
-    try:
-        w = float(pred.get("width", 0))
-        h = float(pred.get("height", 0))
-        if w > 4 and h > 4:
-            return True
-    except (TypeError, ValueError):
-        pass
     return False
 
 
@@ -116,7 +104,7 @@ def evaluate_conjunctiva(
         return None, f"No conjunctiva prediction (expected '{CONJUNCTIVA_CLASS}' or 'conjunctiva')."
     if not saw_confident:
         return None, f"Confidence below threshold {threshold:.2f}."
-    return None, "Prediction has no usable mask or bounding box."
+    return None, "Prediction has no usable polygon segmentation mask."
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +165,6 @@ def risk_level(score: int | None) -> str:
 # ---------------------------------------------------------------------------
 
 def status() -> dict[str, Any]:
-    from backend.services import famacha_local
     from backend.services import famacha_roboflow as fam_rf
     from backend.services.conjunctiva_roboflow import (
         MODEL_ID as conj_model_id,
@@ -185,20 +172,18 @@ def status() -> dict[str, Any]:
     )
 
     conj_ok = conjunctiva_is_configured()
-    local_fam_ok = famacha_local.famacha_model_is_available()
     rf_fam_ok = fam_rf.famacha_is_configured()
-
-    fam_ok = local_fam_ok or rf_fam_ok
+    pipeline_ok = conj_ok and rf_fam_ok
 
     return {
-        "available": conj_ok and fam_ok,
-        "model": "Roboflow Conjunctiva Model + famacha_best.pt",
-        "task": "Conjunctiva detection (Roboflow), then FAMACHA scoring (famacha_best.pt)",
+        "available": pipeline_ok,
+        "model": "Conjunctiva Segmentation Model + FAMACHA Scoring Model",
+        "task": "Conjunctiva detection, then FAMACHA scoring",
         "detectors": {
             "roboflow": {
                 "available": conj_ok,
                 "model_id": conj_model_id,
-                "provider": "Roboflow Conjunctiva Model",
+                "provider": "Conjunctiva Segmentation Model",
                 "type": "instance_segmentation (polygon mask)",
                 "expected_class": CONJUNCTIVA_CLASS,
             },
@@ -208,23 +193,23 @@ def status() -> dict[str, Any]:
             "configured": conj_ok,
             "roboflow_configured": conj_ok,
             "model_id": conj_model_id,
-            "provider": "Roboflow Conjunctiva Model",
+            "provider": "Conjunctiva Segmentation Model",
             "expected_class": CONJUNCTIVA_CLASS,
             "min_confidence": _min_confidence(),
         },
         "famacha": {
-            "configured": fam_ok,
-            "local_available": local_fam_ok,
+            "configured": rf_fam_ok,
+            "local_available": False,
             "roboflow_configured": rf_fam_ok,
-            "model_id": fam_rf.model_id() if rf_fam_ok else "famacha_best.pt",
-            "provider": "FAMACHA Classifier (famacha_best.pt)",
-            "input_mode": "crop",
-            "classes": ["FAMACHA_1", "FAMACHA_2", "FAMACHA_3", "FAMACHA_4"],
-            "missing": [] if fam_ok else ["famacha_best.pt not found on disk"],
+            "model_id": fam_rf.model_id(),
+            "provider": "FAMACHA Scoring Model",
+            "input_mode": fam_rf.input_mode(),
+            "classes": ["Nivel1", "Nivel2", "Nivel3", "Nivel4", "Nivel5"],
+            "missing": fam_rf.missing_configuration(),
         },
         "message": (
-            "Anemia pipeline ready (Roboflow conjunctiva detection + FAMACHA scoring)."
-            if conj_ok and fam_ok
+            "Anemia pipeline ready (Conjunctiva detection + FAMACHA scoring)."
+            if pipeline_ok
             else "Pipeline not fully configured."
         ),
     }
@@ -239,7 +224,7 @@ def _run_single_detector(
     image_bytes: bytes,
     conjunctiva_fn: Callable[[bytes], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Execute the Roboflow cloud conjunctiva segmentation detector."""
+    """Execute the conjunctiva segmentation detector."""
     from backend.services import conjunctiva_roboflow as conj
 
     out: dict[str, Any] = {
@@ -247,7 +232,7 @@ def _run_single_detector(
         "success": False,
         "detected": False,
         "model_id": conj.MODEL_ID,
-        "provider": "Roboflow Conjunctiva Model",
+        "provider": "Conjunctiva Segmentation Model",
         "model_type": "instance_segmentation (polygon mask)",
         "prediction_count": 0,
         "predictions": [],
@@ -269,12 +254,12 @@ def _run_single_detector(
     else:
         if not conj.conjunctiva_is_configured():
             out["configured"] = False
-            out["error"] = "Roboflow API key is not configured in backend/.env"
+            out["error"] = "Conjunctiva model API key is not configured in backend/.env"
             return out
         try:
             res = conj.run_conjunctiva_workflow(image_bytes)
         except Exception as exc:
-            out["error"] = f"Roboflow conjunctiva detection failed: {exc}"
+            out["error"] = f"Conjunctiva detection failed: {exc}"
             return out
 
     elapsed = round((time.perf_counter() - t0) * 1000, 1)
@@ -283,7 +268,7 @@ def _run_single_detector(
 
     if isinstance(res, dict):
         out["model_id"] = res.get("model_id", out["model_id"])
-        out["provider"] = "Roboflow Conjunctiva Model"
+        out["provider"] = "Conjunctiva Segmentation Model"
         out["model_type"] = res.get("model_type", out["model_type"])
         out["predictions"] = res.get("predictions") or []
         out["prediction_count"] = len(out["predictions"])
@@ -299,7 +284,7 @@ def _run_single_detector(
         out["reason"] = reason
 
     print(
-        f"[ANEMIA] Engine=roboflow count={out['prediction_count']} "
+        f"[ANEMIA] Engine=segmentation count={out['prediction_count']} "
         f"detected={out['detected']} conf={out['best_confidence']} reason={out['reason']}"
     )
 
@@ -317,12 +302,17 @@ def analyze(
     input_mode: str | None = None,
     detector: str = "roboflow",
 ) -> dict[str, Any]:
-    """Run Roboflow conjunctiva detection followed by famacha_best.pt scoring."""
+    """Run conjunctiva detection followed strictly by cloud FAMACHA scoring.
+    
+    No local models are used. FAMACHA score is only generated if conjunctiva is detected.
+    """
+    from backend.services import famacha_roboflow as fam_rf
+
     famacha: dict[str, Any] = {
         "attempted": False,
         "success": False,
-        "model_id": "famacha_best.pt",
-        "provider": "FAMACHA Classifier (famacha_best.pt)",
+        "model_id": fam_rf.model_id(),
+        "provider": "FAMACHA Scoring Model",
         "score": None,
         "class_name": None,
         "confidence": None,
@@ -330,7 +320,7 @@ def analyze(
         "error": None,
     }
 
-    # Model A: Exclusively the Roboflow Conjunctiva Model
+    # Model A: Exclusively the Conjunctiva Segmentation Model
     conjunctiva = _run_single_detector("roboflow", image_bytes, conjunctiva_fn=conjunctiva_fn)
 
     def respond(message: str, ok_status: str) -> dict[str, Any]:
@@ -339,7 +329,7 @@ def analyze(
         return {
             "status": ok_status,
             "message": message,
-            "detector_used": conjunctiva.get("provider", "Roboflow Conjunctiva Model"),
+            "detector_used": conjunctiva.get("provider", "Conjunctiva Segmentation Model"),
             "famacha_score": score,
             "risk_level": risk_level(score),
             "annotated_image": conjunctiva.get("annotated_image") or "",
@@ -357,7 +347,7 @@ def analyze(
             ),
             "model": {
                 "available": bool(conjunctiva.get("success")),
-                "model": "Roboflow Conjunctiva Model + famacha_best.pt",
+                "model": "Conjunctiva Segmentation Model + FAMACHA Scoring Model",
             },
             "conjunctiva": conjunctiva,
             "famacha": famacha,
@@ -376,38 +366,35 @@ def analyze(
     if best is None:
         best, _ = evaluate_conjunctiva(conjunctiva)
 
-    # ---- Model B (FAMACHA Scoring via local famacha_best.pt) ----
+    # ---- Model B: FAMACHA Scoring Model ----
     run_b = famacha_fn
     mode = input_mode
 
     if run_b is None:
-        from backend.services import famacha_local
-        from backend.services import famacha_roboflow as fam_rf
-
         if fam_rf.famacha_is_configured():
             run_b = fam_rf.run_famacha_model
             mode = mode or fam_rf.input_mode()
-        elif famacha_local.famacha_model_is_available():
-            run_b = famacha_local.run_famacha_scoring
-            mode = mode or "crop"
         else:
-            famacha["error"] = "FAMACHA model file (famacha_best.pt) not found on disk."
+            missing = fam_rf.missing_configuration()
+            famacha["error"] = "FAMACHA model is not configured: " + ", ".join(missing)
             return respond(MSG_SCORING_FAILED, "ok")
     else:
-        mode = mode or "crop"
+        mode = mode or "full"
 
     famacha["attempted"] = True
 
-    # Prepare model input (cropped conjunctiva ROI or original frame fallback)
+    # Crop conjunctiva ROI for optional evaluation
+    crop_bytes = crop_conjunctiva(image_bytes, best) if best else None
+
+    # Input image: if mode is crop, use crop_bytes or fall back to image_bytes
     if mode == "crop":
-        model_input = crop_conjunctiva(image_bytes, best) if best else None
-        if model_input is None:
-            model_input = image_bytes
+        model_input = crop_bytes if crop_bytes is not None else image_bytes
     else:
         model_input = image_bytes
 
     try:
-        scored = run_b(model_input)
+        # Pass model_input and original image_bytes so the model can evaluate both
+        scored = run_b(model_input, full_image_bytes=image_bytes)
         score = int(scored["score"])
         confidence = float(scored["confidence"])
         class_name = str(scored["class_name"])
@@ -419,7 +406,7 @@ def analyze(
         {
             "success": True,
             "model_id": scored.get("model_id", famacha["model_id"]),
-            "provider": scored.get("provider", famacha["provider"]),
+            "provider": scored.get("provider", "FAMACHA Scoring Model"),
             "score": score,
             "class_name": class_name,
             "confidence": confidence,

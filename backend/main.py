@@ -1115,7 +1115,7 @@ def get_conjunctiva_status():
         "configured": conjunctiva_is_configured(),
         "endpoint": conjunctiva_endpoint(),
         "model_id": CONJUNCTIVA_MODEL_ID,
-        "provider": "Roboflow Conjunctiva Model",
+        "provider": "Conjunctiva Segmentation Model",
         "note": "API key is read only from the backend environment.",
     }
 

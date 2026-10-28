@@ -199,13 +199,6 @@ def _render_annotation(image_bytes: bytes, predictions: list[dict[str, Any]]) ->
             # Draw crisp yellow outline
             cv2.polylines(output, [polygon], True, OUTLINE_COLOR, 2, cv2.LINE_AA)
 
-        elif all(k in pred for k in ("x", "y", "width", "height")):
-            cx, cy = pred["x"], pred["y"]
-            bw, bh = pred["width"], pred["height"]
-            x1, y1 = int(round(cx - bw / 2)), int(round(cy - bh / 2))
-            x2, y2 = int(round(cx + bw / 2)), int(round(cy + bh / 2))
-            cv2.rectangle(output, (x1, y1), (x2, y2), OUTLINE_COLOR, 2)
-
     ok, encoded = cv2.imencode(".jpg", output, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
     if not ok:
         return None
@@ -324,7 +317,7 @@ def run_conjunctiva_workflow(
 
         return {
             "model_id": target_model,
-            "provider": "Roboflow Conjunctiva Model",
+            "provider": "Conjunctiva Segmentation Model",
             "model_type": "instance_segmentation (polygon mask)",
             "predictions": normalized_predictions,
             "prediction_count": len(normalized_predictions),
