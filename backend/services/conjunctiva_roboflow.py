@@ -28,7 +28,7 @@ import numpy as np
 
 DEFAULT_WORKSPACE = "sharvan-m"
 DEFAULT_WORKFLOW_ID = "general-segmentation-api-68"
-DEFAULT_MODEL_ID = "general-segmentation-api-68"
+DEFAULT_MODEL_ID = "segmentation_conjunctiva-rdlmb-pqdsd/1"
 DEFAULT_API_URL = "https://serverless.roboflow.com"
 DEFAULT_CLASSES = "sheep-conjunctiva"
 
@@ -222,17 +222,14 @@ def run_conjunctiva_workflow(
     max_retries: int = 2,
     backoff_factor: float = 1.0,
 ) -> dict[str, Any]:
-    """Execute the AI Conjunctiva Segmentation Workflow (general-segmentation-api-68).
-
-    Calls the serverless workflow configured in the workspace sharvan-m.
-    """
+    """Execute the AI Conjunctiva Segmentation Model with multi-endpoint resilience."""
     client = _get_client()
 
     if not image_bytes:
         raise RoboflowWorkflowError("Empty image bytes submitted for inference.")
 
     temp_path: str | None = None
-    target_workflow = WORKFLOW_ID
+    target_model = MODEL_ID
 
     try:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -244,39 +241,63 @@ def run_conjunctiva_workflow(
         if parameters:
             params.update(parameters)
 
-        # 1. Primary execution: run_workflow on general-segmentation-api-68
+        # 1. Primary execution: call hosted segmentation model (segmentation_conjunctiva-rdlmb-pqdsd/1)
         try:
-            raw_result = client.run_workflow(
-                workspace_name=WORKSPACE_NAME,
-                workflow_id=target_workflow,
-                images={"image": temp_path},
-                parameters=params,
-                use_cache=True,
-            )
-        except Exception as wf_exc:
-            # 2. Fallback to client.infer with MODEL_ID if configured
-            try:
-                raw_result = client.infer(temp_path, model_id=MODEL_ID)
-            except Exception as infer_exc:
-                raise RoboflowWorkflowError(
-                    f"AI conjunctiva inference failed: {wf_exc}"
-                ) from wf_exc
+            infer_res = client.infer(temp_path, model_id=target_model)
+            if infer_res and isinstance(infer_res, dict) and infer_res.get("predictions"):
+                raw_result = infer_res
+        except Exception:
+            pass
 
-        # Parse response defensively (handles both client.infer dict and client.run_workflow list)
+        # 2. Secondary execution: if infer returned 0 predictions, run workflow
+        if not raw_result and WORKFLOW_ID:
+            try:
+                wf_res = client.run_workflow(
+                    workspace_name=WORKSPACE_NAME,
+                    workflow_id=WORKFLOW_ID,
+                    images={"image": temp_path},
+                    parameters=params,
+                    use_cache=True,
+                )
+                if isinstance(wf_res, list) and len(wf_res) > 0:
+                    entry = wf_res[0]
+                    p_block = entry.get("predictions", {})
+                    preds_list = p_block.get("predictions", []) if isinstance(p_block, dict) else (p_block if isinstance(p_block, list) else [])
+                    if preds_list:
+                        raw_result = wf_res
+            except Exception:
+                pass
+
+        # 3. Tertiary fallback: try custom sheep conjunctiva workflow if still empty
+        if not raw_result:
+            try:
+                backup_wf = "sheep-conjunctiva-segmentation-1790872855151"
+                wf_res = client.run_workflow(
+                    workspace_name=WORKSPACE_NAME,
+                    workflow_id=backup_wf,
+                    images={"image": temp_path},
+                    use_cache=True,
+                )
+                if isinstance(wf_res, list) and len(wf_res) > 0:
+                    entry = wf_res[0]
+                    p_block = entry.get("predictions", {})
+                    preds_list = p_block.get("predictions", []) if isinstance(p_block, dict) else (p_block if isinstance(p_block, list) else [])
+                    if preds_list:
+                        raw_result = wf_res
+            except Exception:
+                pass
+
+        # Fallback to direct infer if all else yielded nothing
+        if raw_result is None:
+            raw_result = client.infer(temp_path, model_id=target_model)
+
+        # Parse response defensively
         raw_predictions: list[Any] = []
         raw_image_meta: dict[str, Any] = {}
-        workflow_annotated_image: str | None = None
 
         if isinstance(raw_result, list) and len(raw_result) > 0:
             entry = raw_result[0]
             if isinstance(entry, dict):
-                annotated_raw = entry.get("annotated_image")
-                if isinstance(annotated_raw, str) and annotated_raw:
-                    if not annotated_raw.startswith("data:image"):
-                        workflow_annotated_image = f"data:image/jpeg;base64,{annotated_raw}"
-                    else:
-                        workflow_annotated_image = annotated_raw
-
                 predictions_block = entry.get("predictions")
                 if isinstance(predictions_block, dict):
                     raw_predictions = predictions_block.get("predictions") or []
@@ -295,21 +316,15 @@ def run_conjunctiva_workflow(
         elif isinstance(raw_result, dict):
             raw_predictions = raw_result.get("predictions") or []
             raw_image_meta = raw_result.get("image") or {}
-            annotated_raw = raw_result.get("annotated_image")
-            if isinstance(annotated_raw, str) and annotated_raw:
-                if not annotated_raw.startswith("data:image"):
-                    workflow_annotated_image = f"data:image/jpeg;base64,{annotated_raw}"
-                else:
-                    workflow_annotated_image = annotated_raw
 
         normalized_predictions = [_normalize_prediction(p) for p in raw_predictions]
 
-        # Generate clean yellow visualization with badge
-        annotated_b64 = _render_annotation(image_bytes, normalized_predictions) or workflow_annotated_image
+        # Render clean annotation ONLY: NO text labels, NO percentage overlays
+        annotated_b64 = _render_annotation(image_bytes, normalized_predictions)
 
         return {
-            "model_id": target_workflow,
-            "provider": "GoatVision AI Vision Engine",
+            "model_id": target_model,
+            "provider": "Roboflow Conjunctiva Model",
             "model_type": "instance_segmentation (polygon mask)",
             "predictions": normalized_predictions,
             "prediction_count": len(normalized_predictions),

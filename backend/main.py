@@ -1115,7 +1115,7 @@ def get_conjunctiva_status():
         "configured": conjunctiva_is_configured(),
         "endpoint": conjunctiva_endpoint(),
         "model_id": CONJUNCTIVA_MODEL_ID,
-        "provider": "GoatVision AI Vision Engine",
+        "provider": "Roboflow Conjunctiva Model",
         "note": "API key is read only from the backend environment.",
     }
 

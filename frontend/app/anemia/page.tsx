@@ -256,21 +256,21 @@ export default function AnemiaPage() {
       {/* Top Status Cards */}
       <div className="stats">
         <div className="stat">
+          <div className="stat-label">Conjunctiva Detection</div>
+          <div className="stat-value" style={{ fontSize: 18 }}>
+            Roboflow Model
+          </div>
+          <div className="stat-note">
+            Instance Segmentation
+          </div>
+        </div>
+
+        <div className="stat">
           <div className="stat-label">FAMACHA Model</div>
           <div className="stat-value" style={{ fontSize: 18 }}>
             famacha_best.pt
           </div>
-          <div className="stat-note">Local Model (Scores 1–5)</div>
-        </div>
-
-        <div className="stat">
-          <div className="stat-label">Conjunctiva Segmentation</div>
-          <div className="stat-value" style={{ fontSize: 18 }}>
-            AI Engine Active
-          </div>
-          <div className="stat-note">
-            Curved mucosal precision mask
-          </div>
+          <div className="stat-note">Clinical Scores 1–5</div>
         </div>
 
         <div className="stat">
@@ -278,7 +278,7 @@ export default function AnemiaPage() {
           <div className="stat-value" style={{ fontSize: 18 }}>
             {model?.available ? "Ready" : "Checking..."}
           </div>
-          <div className="stat-note">Conjunctiva + FAMACHA Scoring</div>
+          <div className="stat-note">Roboflow + FAMACHA Scoring</div>
         </div>
 
         <div className="stat">
@@ -458,13 +458,8 @@ export default function AnemiaPage() {
                           </div>
 
                           <div className="kv">
-                            <span>Scoring Model</span>
-                            <b>famacha_best.pt</b>
-                          </div>
-
-                          <div className="kv">
-                            <span>Conjunctiva</span>
-                            <b>Detected (AI Segmentation Mask)</b>
+                            <span>Conjunctiva Detector</span>
+                            <b>Roboflow Segmentation Model</b>
                           </div>
 
                           <div className="kv">
@@ -474,6 +469,11 @@ export default function AnemiaPage() {
                                 ? `${(result.conjunctiva.best_confidence * 100).toFixed(1)}%`
                                 : "—"}
                             </b>
+                          </div>
+
+                          <div className="kv">
+                            <span>Scoring Model</span>
+                            <b>famacha_best.pt (Scores 1–5)</b>
                           </div>
                         </div>
                       </div>
@@ -508,7 +508,7 @@ export default function AnemiaPage() {
                           </div>
                           <div className="kv">
                             <span>Detector Engine</span>
-                            <b>{result.detector_used || "AI Vision"}</b>
+                            <b>{result.detector_used || "Roboflow Conjunctiva Model"}</b>
                           </div>
                         </div>
                       </div>

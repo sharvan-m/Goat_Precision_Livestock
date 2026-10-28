@@ -180,48 +180,35 @@ def status() -> dict[str, Any]:
     from backend.services import famacha_local
     from backend.services import famacha_roboflow as fam_rf
     from backend.services.conjunctiva_roboflow import (
-        WORKFLOW_ID as conj_workflow_id,
+        MODEL_ID as conj_model_id,
         conjunctiva_is_configured,
-    )
-    from backend.services.conjunctiva_local import (
-        get_model_path as get_local_conj_path,
-        local_model_is_available as local_conj_available,
     )
 
     conj_ok = conjunctiva_is_configured()
-    local_conj_ok = local_conj_available()
     local_fam_ok = famacha_local.famacha_model_is_available()
     rf_fam_ok = fam_rf.famacha_is_configured()
 
     fam_ok = local_fam_ok or rf_fam_ok
 
     return {
-        "available": (conj_ok or local_conj_ok) and fam_ok,
-        "model": fam_rf.model_id() if rf_fam_ok else "famacha_best.pt",
-        "task": "Conjunctiva detection, then FAMACHA scoring",
+        "available": conj_ok and fam_ok,
+        "model": "Roboflow Conjunctiva Model + famacha_best.pt",
+        "task": "Conjunctiva detection (Roboflow), then FAMACHA scoring (famacha_best.pt)",
         "detectors": {
             "roboflow": {
                 "available": conj_ok,
-                "model_id": conj_workflow_id,
-                "provider": "GoatVision AI Vision Engine",
+                "model_id": conj_model_id,
+                "provider": "Roboflow Conjunctiva Model",
                 "type": "instance_segmentation (polygon mask)",
                 "expected_class": CONJUNCTIVA_CLASS,
             },
-            "local": {
-                "available": local_conj_ok,
-                "model_id": f"local:{get_local_conj_path().name}",
-                "model_path": str(get_local_conj_path()),
-                "provider": "Our Local Offline Model",
-                "type": "object_detection (YOLO11n bounding box)",
-                "expected_class": "conjunctiva",
-            },
         },
-        "default_detector": "roboflow" if conj_ok else ("local" if local_conj_ok else "none"),
+        "default_detector": "roboflow" if conj_ok else "none",
         "conjunctiva": {
-            "configured": conj_ok or local_conj_ok,
+            "configured": conj_ok,
             "roboflow_configured": conj_ok,
-            "local_available": local_conj_ok,
-            "model_id": conj_workflow_id,
+            "model_id": conj_model_id,
+            "provider": "Roboflow Conjunctiva Model",
             "expected_class": CONJUNCTIVA_CLASS,
             "min_confidence": _min_confidence(),
         },
@@ -230,14 +217,14 @@ def status() -> dict[str, Any]:
             "local_available": local_fam_ok,
             "roboflow_configured": rf_fam_ok,
             "model_id": fam_rf.model_id() if rf_fam_ok else "famacha_best.pt",
-            "provider": "AI Cloud Classifier" if rf_fam_ok else "Local Classifier (famacha_best.pt)",
-            "input_mode": fam_rf.input_mode() if rf_fam_ok else "crop",
-            "classes": sorted(fam_rf.CLASS_TO_SCORE) if fam_rf.CLASS_TO_SCORE else ["FAMACHA_1", "FAMACHA_2", "FAMACHA_3", "FAMACHA_4"],
+            "provider": "FAMACHA Classifier (famacha_best.pt)",
+            "input_mode": "crop",
+            "classes": ["FAMACHA_1", "FAMACHA_2", "FAMACHA_3", "FAMACHA_4"],
             "missing": [] if fam_ok else ["famacha_best.pt not found on disk"],
         },
         "message": (
-            "Anemia pipeline ready (Conjunctiva detection + FAMACHA scoring)."
-            if (conj_ok or local_conj_ok) and fam_ok
+            "Anemia pipeline ready (Roboflow conjunctiva detection + FAMACHA scoring)."
+            if conj_ok and fam_ok
             else "Pipeline not fully configured."
         ),
     }
@@ -252,17 +239,16 @@ def _run_single_detector(
     image_bytes: bytes,
     conjunctiva_fn: Callable[[bytes], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Execute either the cloud Roboflow detector or the local YOLO detector."""
+    """Execute the Roboflow cloud conjunctiva segmentation detector."""
     from backend.services import conjunctiva_roboflow as conj
-    from backend.services import conjunctiva_local as local_conj
 
     out: dict[str, Any] = {
         "configured": True,
         "success": False,
         "detected": False,
-        "model_id": "unknown",
-        "provider": "unknown",
-        "model_type": "unknown",
+        "model_id": conj.MODEL_ID,
+        "provider": "Roboflow Conjunctiva Model",
+        "model_type": "instance_segmentation (polygon mask)",
         "prediction_count": 0,
         "predictions": [],
         "best_confidence": None,
@@ -280,33 +266,15 @@ def _run_single_detector(
         except Exception as exc:
             out["error"] = str(exc)
             return out
-    elif detector_type == "local":
-        out["model_id"] = f"local:{local_conj.get_model_path().name} (YOLO11n)"
-        out["provider"] = "Our Local Model (YOLO11n)"
-        out["model_type"] = "bounding_box"
-
-        if not local_conj.local_model_is_available():
-            out["configured"] = False
-            out["error"] = f"Local model file not found at {local_conj.get_model_path()}"
-            return out
-        try:
-            res = local_conj.run_local_conjunctiva_detection(image_bytes, conf_threshold=0.20)
-        except Exception as exc:
-            out["error"] = f"Local detection failed: {exc}"
-            return out
-    else:  # default AI vision workflow
-        out["model_id"] = conj.WORKFLOW_ID
-        out["provider"] = "GoatVision AI Vision Engine"
-        out["model_type"] = "instance_segmentation (polygon mask)"
-
+    else:
         if not conj.conjunctiva_is_configured():
             out["configured"] = False
-            out["error"] = "Vision API key is not configured in backend/.env"
+            out["error"] = "Roboflow API key is not configured in backend/.env"
             return out
         try:
             res = conj.run_conjunctiva_workflow(image_bytes)
         except Exception as exc:
-            out["error"] = f"Conjunctiva detection failed: {exc}"
+            out["error"] = f"Roboflow conjunctiva detection failed: {exc}"
             return out
 
     elapsed = round((time.perf_counter() - t0) * 1000, 1)
@@ -315,7 +283,7 @@ def _run_single_detector(
 
     if isinstance(res, dict):
         out["model_id"] = res.get("model_id", out["model_id"])
-        out["provider"] = res.get("provider", out["provider"])
+        out["provider"] = "Roboflow Conjunctiva Model"
         out["model_type"] = res.get("model_type", out["model_type"])
         out["predictions"] = res.get("predictions") or []
         out["prediction_count"] = len(out["predictions"])
@@ -331,7 +299,7 @@ def _run_single_detector(
         out["reason"] = reason
 
     print(
-        f"[ANEMIA] Engine={detector_type} count={out['prediction_count']} "
+        f"[ANEMIA] Engine=roboflow count={out['prediction_count']} "
         f"detected={out['detected']} conf={out['best_confidence']} reason={out['reason']}"
     )
 
@@ -349,15 +317,12 @@ def analyze(
     input_mode: str | None = None,
     detector: str = "roboflow",
 ) -> dict[str, Any]:
-    """Run conjunctiva detection followed by local famacha_best.pt scoring."""
-    mode_clean = str(detector or "roboflow").strip().lower()
-    is_compare_mode = mode_clean in ("compare", "both")
-
+    """Run Roboflow conjunctiva detection followed by famacha_best.pt scoring."""
     famacha: dict[str, Any] = {
         "attempted": False,
         "success": False,
         "model_id": "famacha_best.pt",
-        "provider": "Local Classifier (famacha_best.pt)",
+        "provider": "FAMACHA Classifier (famacha_best.pt)",
         "score": None,
         "class_name": None,
         "confidence": None,
@@ -365,37 +330,16 @@ def analyze(
         "error": None,
     }
 
-    comparison: dict[str, Any] | None = None
-
-    # ---- Model A (Conjunctiva Detection) ----
-    if is_compare_mode and conjunctiva_fn is None:
-        rf_result = _run_single_detector("roboflow", image_bytes)
-        local_result = _run_single_detector("local", image_bytes)
-
-        comparison = {
-            "roboflow": rf_result,
-            "local": local_result,
-            "agreement": (rf_result.get("detected") == local_result.get("detected")),
-        }
-
-        # Select the detected one as primary for scoring
-        if rf_result.get("detected"):
-            conjunctiva = rf_result
-        elif local_result.get("detected"):
-            conjunctiva = local_result
-        else:
-            conjunctiva = rf_result
-    else:
-        chosen_type = "local" if mode_clean == "local" else "roboflow"
-        conjunctiva = _run_single_detector(chosen_type, image_bytes, conjunctiva_fn=conjunctiva_fn)
+    # Model A: Exclusively the Roboflow Conjunctiva Model
+    conjunctiva = _run_single_detector("roboflow", image_bytes, conjunctiva_fn=conjunctiva_fn)
 
     def respond(message: str, ok_status: str) -> dict[str, Any]:
         scored = famacha["success"] and conjunctiva.get("detected") is True
         score = famacha["score"] if scored else None
-        res_dict = {
+        return {
             "status": ok_status,
             "message": message,
-            "detector_used": conjunctiva.get("provider", mode_clean),
+            "detector_used": conjunctiva.get("provider", "Roboflow Conjunctiva Model"),
             "famacha_score": score,
             "risk_level": risk_level(score),
             "annotated_image": conjunctiva.get("annotated_image") or "",
@@ -413,14 +357,11 @@ def analyze(
             ),
             "model": {
                 "available": bool(conjunctiva.get("success")),
-                "model": famacha["model_id"] or "famacha_best.pt",
+                "model": "Roboflow Conjunctiva Model + famacha_best.pt",
             },
             "conjunctiva": conjunctiva,
             "famacha": famacha,
         }
-        if comparison is not None:
-            res_dict["comparison"] = comparison
-        return res_dict
 
     # ---- Check detection result ----
     if not conjunctiva.get("success"):
