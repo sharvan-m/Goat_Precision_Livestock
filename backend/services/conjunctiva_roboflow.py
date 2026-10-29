@@ -28,7 +28,7 @@ import numpy as np
 
 DEFAULT_WORKSPACE = "sharvan-m"
 DEFAULT_WORKFLOW_ID = "general-segmentation-api-68"
-DEFAULT_MODEL_ID = "segmentation_conjunctiva-rdlmb-pqdsd/1"
+DEFAULT_MODEL_ID = "segmentation_conjunctiva-rdlmb/3"
 DEFAULT_API_URL = "https://serverless.roboflow.com"
 DEFAULT_CLASSES = "sheep-conjunctiva"
 
@@ -171,35 +171,39 @@ def _normalize_prediction(pred: Any) -> dict[str, Any]:
 
 
 def _render_annotation(image_bytes: bytes, predictions: list[dict[str, Any]]) -> str | None:
-    """Draw yellow polygon mask and outline with NO text labels."""
+    """Draw conjunctiva segmentation polygon with translucent green fill and yellow boundary."""
     image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         return None
 
-    output = image.copy()
-    overlay = output.copy()
-
-    # Roboflow UI colors (BGR)
-    MASK_COLOR = (0, 235, 245)      # Translucent yellow fill
-    OUTLINE_COLOR = (0, 215, 255)   # Bright yellow outline
+    overlay = image.copy()
 
     for pred in predictions:
         pts = pred.get("points") or []
+        if len(pts) < 3:
+            continue
 
-        if len(pts) >= 3:
-            polygon = np.asarray(
-                [[int(round(p["x"])), int(round(p["y"]))] for p in pts],
-                dtype=np.int32,
-            ).reshape((-1, 1, 2))
+        polygon = np.array(
+            [[int(round(p["x"])), int(round(p["y"]))] for p in pts],
+            dtype=np.int32,
+        )
 
-            # Draw translucent yellow fill
-            cv2.fillPoly(overlay, [polygon], MASK_COLOR)
-            output = cv2.addWeighted(overlay, 0.45, output, 0.55, 0)
+        # Fill segmentation area (green)
+        cv2.fillPoly(overlay, [polygon], (0, 255, 0))
 
-            # Draw crisp yellow outline
-            cv2.polylines(output, [polygon], True, OUTLINE_COLOR, 2, cv2.LINE_AA)
+        # Draw polygon boundary (yellow)
+        cv2.polylines(
+            image,
+            [polygon],
+            isClosed=True,
+            color=(0, 255, 255),
+            thickness=2,
+        )
 
-    ok, encoded = cv2.imencode(".jpg", output, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # Blend filled mask with original image (30% overlay, 70% image)
+    image = cv2.addWeighted(overlay, 0.30, image, 0.70, 0)
+
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
     if not ok:
         return None
     return "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
@@ -234,13 +238,25 @@ def run_conjunctiva_workflow(
         if parameters:
             params.update(parameters)
 
-        # 1. Primary execution: call hosted segmentation model (segmentation_conjunctiva-rdlmb-pqdsd/1)
+        # 1. Primary execution: call hosted segmentation model (e.g. segmentation_conjunctiva-rdlmb/3)
         try:
             infer_res = client.infer(temp_path, model_id=target_model)
             if infer_res and isinstance(infer_res, dict) and infer_res.get("predictions"):
                 raw_result = infer_res
         except Exception:
             pass
+
+        # 2. Secondary fallback: try alternate model ID if primary returned 0 predictions
+        if not raw_result:
+            for alt in ("segmentation_conjunctiva-rdlmb-pqdsd/1", "segmentation_conjunctiva-rdlmb/1"):
+                try:
+                    alt_res = client.infer(temp_path, model_id=alt)
+                    if alt_res and isinstance(alt_res, dict) and alt_res.get("predictions"):
+                        raw_result = alt_res
+                        target_model = alt
+                        break
+                except Exception:
+                    pass
 
         # 2. Secondary execution: if infer returned 0 predictions, run workflow
         if not raw_result and WORKFLOW_ID:
