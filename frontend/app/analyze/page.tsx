@@ -128,7 +128,12 @@ export default function AnalyzePage() {
       </div>
 
       <div className="analysis-input-grid">
-        <UploadDropzone file={file} onFile={setFile}/>
+        <UploadDropzone
+          file={file}
+          onFile={setFile}
+          accept={mode === "video" ? ".mp4,.avi,.mov,.mkv,video/mp4,video/x-msvideo,video/quicktime,video/x-matroska" : ".jpg,.jpeg,.png,.bmp,.webp,image/jpeg,image/png,image/bmp,image/webp"}
+          helperText={mode === "video" ? "or click to browse · MP4, AVI, MOV or MKV" : "or click to browse · JPG, PNG, BMP or WEBP"}
+        />
         <div className="settings-panel">
           <div className="form-row">
             <div className="field"><label>Calibration scale (cm / pixel)</label><input value={scale} onChange={e=>setScale(e.target.value)} type="number" min="0.01" step="0.1"/></div>

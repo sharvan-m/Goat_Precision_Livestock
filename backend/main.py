@@ -1188,7 +1188,7 @@ async def analyze_image(
     file: UploadFile = File(...),
     pixel_scale: float = Form(1.0),
 ):
-    allowed = {".jpg", ".jpeg", ".png", ".bmp"}
+    allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported image type.")
@@ -1352,6 +1352,7 @@ def get_media(path: str):
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
+        ".webp": "image/webp",
         ".csv": "text/csv",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }

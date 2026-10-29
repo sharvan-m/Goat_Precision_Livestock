@@ -6,9 +6,11 @@ import { CheckCircle2, FileImage, UploadCloud, X } from "lucide-react";
 type Props = {
   file: File | null;
   onFile: (file: File | null) => void;
+  accept?: string;
+  helperText?: string;
 };
 
-export function UploadDropzone({ file, onFile }: Props) {
+export function UploadDropzone({ file, onFile, accept, helperText }: Props) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -30,7 +32,7 @@ export function UploadDropzone({ file, onFile }: Props) {
     >
       <UploadCloud size={30} color="var(--green)" />
       <div className="dropzone-title">{dragging ? "Release to upload" : "Drop a goat image here"}</div>
-      <div className="dropzone-copy">or click to browse · JPG, PNG, BMP or WEBP</div>
+      <div className="dropzone-copy">{helperText || "or click to browse · JPG, PNG, BMP or WEBP"}</div>
 
       {file && (
         <div className="dropzone-file" onClick={(e) => e.stopPropagation()}>
@@ -51,7 +53,7 @@ export function UploadDropzone({ file, onFile }: Props) {
         ref={inputRef}
         hidden
         type="file"
-        accept=".jpg,.jpeg,.png,.bmp,.webp"
+        accept={accept || ".jpg,.jpeg,.png,.bmp,.webp,image/jpeg,image/png,image/bmp,image/webp"}
         onChange={(e) => pick(e.target.files)}
       />
     </div>

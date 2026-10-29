@@ -171,8 +171,10 @@ export default function AnemiaPage() {
   function chooseFile(next: File | null) {
     if (!next) return;
 
-    const allowed = ["image/jpeg", "image/png", "image/bmp", "image/webp"];
-    if (!allowed.includes(next.type)) {
+    const ext = next.name.toLowerCase().slice(next.name.lastIndexOf("."));
+    const allowedExts = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
+    const allowedTypes = ["image/jpeg", "image/png", "image/bmp", "image/webp"];
+    if (!allowedTypes.includes(next.type) && !allowedExts.includes(ext)) {
       setError("Please upload a JPG, PNG, BMP, or WEBP image.");
       return;
     }
