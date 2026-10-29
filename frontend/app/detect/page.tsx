@@ -12,6 +12,7 @@ type Prediction = {
   box: { x1: number; y1: number; x2: number; y2: number } | null;
   center?: { x: number; y: number } | null;
   side_view_score?: number;
+  visibility_pct?: number;
   is_valid_side?: boolean;
   side_category?: string;
   rejection_reasons?: string[];
@@ -280,6 +281,12 @@ export default function GoatDetectionPage() {
                     <span>Weight Feasibility</span>
                     <b style={{ color: p.is_valid_side ? "#10b981" : "#ef4444" }}>
                       {p.is_valid_side ? "Ready for Weight" : "Not Usable"}
+                    </b>
+                  </div>
+                  <div className="kv">
+                    <span>Body Visibility</span>
+                    <b style={{ color: (p.visibility_pct ?? 100) >= 70 ? "#10b981" : "#ef4444" }}>
+                      {p.visibility_pct != null ? `${p.visibility_pct}%` : "100%"}
                     </b>
                   </div>
                   <div className="kv">

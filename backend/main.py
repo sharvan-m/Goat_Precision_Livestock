@@ -858,20 +858,21 @@ def _annotate_with_side_classification(
         # 3. Direct mask occlusion: another animal's body directly overlapping this mask
         m1 = det.mask > 0
         m1_sum = float(m1.sum())
+        max_mask_occ = 0.0
         if m1_sum > 0:
-            max_occ = 0.0
             for j, other_m in enumerate(all_masks):
                 if i == j or other_m is None:
                     continue
                 overlap = np.logical_and(m1, other_m > 0).sum()
                 if overlap > 0:
                     occ = overlap / m1_sum
-                    if occ > max_occ:
-                        max_occ = occ
-            if max_occ > 0.25:
-                reasons.append(f"Occluded by overlapping animal ({int(max_occ * 100)}%)")
+                    if occ > max_mask_occ:
+                        max_mask_occ = occ
+            if max_mask_occ > 0.25:
+                reasons.append(f"Occluded by overlapping animal ({int(max_mask_occ * 100)}%)")
 
-        # 4. Severe foreground blocking in herd: another animal in front covers >= 40% of bounding area
+        # 4. Severe foreground blocking in herd: another animal in front covers bounding area
+        max_fg_occ = 0.0
         for j, bj in enumerate(all_boxes):
             if i == j:
                 continue
@@ -879,14 +880,33 @@ def _annotate_with_side_classification(
             ix2, iy2 = min(float(x2), bj[2]), min(float(y2), bj[3])
             if ix2 > ix1 and iy2 > iy1:
                 inter = (ix2 - ix1) * (iy2 - iy1)
-                if inter / float(box_area) >= 0.40:
-                    if bj[3] > float(y2) + 20:
+                fg_ratio = inter / float(box_area)
+                if bj[3] > float(y2) + 15:
+                    if fg_ratio > max_fg_occ:
+                        max_fg_occ = fg_ratio
+                    if fg_ratio >= 0.40:
                         reasons.append("Severely blocked by foreground animal")
                         break
 
+        total_occlusion = max(max_mask_occ, max_fg_occ)
+
+        # Border clipping loss
+        clip_loss = 0.0
+        if x1 <= 2:
+            clip_loss += 0.10
+        if x2 >= w - 2:
+            clip_loss += 0.10
+        if y1 <= 2:
+            clip_loss += 0.08
+        if y2 >= h - 2:
+            clip_loss += 0.05
+        border_visibility = max(0.40, 1.0 - clip_loss)
+
+        # Real Visibility Percentage: unoccluded body fraction remaining inside image frame
+        visibility_pct = round(float(np.clip((1.0 - total_occlusion) * border_visibility * 100.0, 10.0, 100.0)), 1)
+
         # 5. Flank / Torso Barrel Aspect Ratio (measured between 25% and 75% height):
-        # In a true side view, the body barrel is elongated horizontally (shoulder to rump length visible).
-        # In a frontal or rear view, the torso barrel is narrow (< 1.05 aspect ratio).
+        barrel_aspect = 1.30
         y_coords, x_coords = np.where(m1)
         if len(y_coords) > 50:
             ymin, ymax = y_coords.min(), y_coords.max()
@@ -909,16 +929,42 @@ def _annotate_with_side_classification(
         else:
             reasons.append("Mask too small for biometric measurement")
 
+        # 6. Body orientation angle relative to horizontal
+        angle_deg = 0.0
+        contours, _ = cv2.findContours(det.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            largest_c = max(contours, key=cv2.contourArea)
+            if len(largest_c) >= 5:
+                try:
+                    ellipse = cv2.fitEllipse(largest_c)
+                    (_, _), (d1, d2), angle = ellipse
+                    if d1 < d2:
+                        angle_deg = abs(angle - 90.0)
+                    else:
+                        angle_deg = angle if angle <= 90.0 else 180.0 - angle
+                except Exception:
+                    angle_deg = 0.0
+        angle_deg = float(np.clip(angle_deg, 0.0, 90.0))
+
+        # Real continuous profile quality score derived from position and visible body fraction
+        aspect_factor = float(np.clip((barrel_aspect - 0.70) / (1.55 - 0.70), 0.35, 1.0))
+        angle_factor = max(0.40, float(np.cos(np.radians(angle_deg))))
+        profile_factor = 0.65 * aspect_factor + 0.35 * angle_factor
+
+        raw_quality = (0.50 * (visibility_pct / 100.0) + 0.35 * profile_factor + 0.15 * float(det.confidence)) * 100.0
+
         is_valid = (len(reasons) == 0)
-        score = 92.0 if is_valid else max(15.0, 75.0 - len(reasons) * 20.0)
         validity_list.append(is_valid)
 
         if is_valid:
             valid_count += 1
             category = "VALID SIDE VIEW"
+            score = round(float(np.clip(raw_quality, 76.0, 98.6)), 1)
         else:
             other_count += 1
             category = "INVALID ANGLE"
+            penalty = len(reasons) * 7.5
+            score = round(float(np.clip((raw_quality - penalty) * 0.80, 15.0, 69.5)), 1)
 
         # Compute center of goat body (flank/torso mass centroid)
         y_coords_all, x_coords_all = np.where(m1)
@@ -946,6 +992,7 @@ def _annotate_with_side_classification(
             "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
             "center": {"x": int(cx), "y": int(cy)},
             "side_view_score": score,
+            "visibility_pct": visibility_pct,
             "is_valid_side": is_valid,
             "side_category": category,
             "rejection_reasons": reasons,
