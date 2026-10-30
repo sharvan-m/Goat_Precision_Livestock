@@ -136,6 +136,7 @@ export type AnemiaResult = {
 
 type DetectState = {
   file: File | null;
+  preview: string;
   result: DetectResponse | null;
   busy: boolean;
   error: string;
@@ -163,6 +164,7 @@ type AnalysisContextType = {
 
 const defaultDetect: DetectState = {
   file: null,
+  preview: "",
   result: null,
   busy: false,
   error: "",
@@ -206,7 +208,14 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const resetDetect = useCallback(() => setDetectRaw(defaultDetect), []);
+  const resetDetect = useCallback(() => {
+    setDetectRaw((prev) => {
+      if (prev.preview) {
+        try { URL.revokeObjectURL(prev.preview); } catch {}
+      }
+      return defaultDetect;
+    });
+  }, []);
   const resetAnemia = useCallback(() => {
     setAnemiaRaw((prev) => {
       // Revoke the old object URL to avoid memory leaks

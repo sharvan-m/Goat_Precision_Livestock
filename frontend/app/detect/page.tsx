@@ -10,9 +10,24 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function GoatDetectionPage() {
   const { detect, setDetect, resetDetect } = useAnalysis();
-  const { file, result, busy, error, viewMode } = detect;
+  const { file, preview, result, busy, error, viewMode } = detect;
 
-  const setFile = useCallback((f: File | null) => setDetect({ file: f, result: null, error: "" }), [setDetect]);
+  const setFile = useCallback(
+    (f: File | null) => {
+      if (preview) {
+        try {
+          URL.revokeObjectURL(preview);
+        } catch {}
+      }
+      setDetect({
+        file: f,
+        preview: f ? URL.createObjectURL(f) : "",
+        result: null,
+        error: "",
+      });
+    },
+    [preview, setDetect]
+  );
 
   async function scan() {
     if (!file) return;
@@ -54,34 +69,67 @@ export default function GoatDetectionPage() {
       </div>
     </div>
 
-    <div className="card">
-      <div className="grid-2">
-        <div>
-          <UploadDropzone file={file} onFile={setFile}/>
-        </div>
-        <div>
-          <div className="feature-card" style={{ marginBottom: 14 }}>
-            <div className="feature-icon"><ScanSearch size={17}/></div>
-            <h3>Side-View Quality & Weight Classification</h3>
+    <div className="result-layout">
+      <section className="card">
+        <div className="section-head" style={{ marginTop: 0 }}>
+          <div>
+            <h2>1. Upload goat image</h2>
             <p className="page-copy">
-              Color-codes bounding masks with centered ID numbers (1, 2, 3...):
-              <br/>
-              🟢 <b>LIGHT GREEN</b>: Flank & torso visible at the correct side angle (Weight & BCS calculated).
-              <br/>
-              🔴 <b>RED</b>: Front-facing, rear-facing, grazing, or distant profile (Weight gated).
+              Upload a clear side-view photo of goats for weight and body condition assessment.
             </p>
           </div>
-          <button
-            className="btn btn-primary"
-            disabled={!file || busy}
-            style={{ width: "100%", opacity: (!file || busy) ? 0.55 : 1 }}
-            onClick={scan}
-          >
-            {busy ? <><Loader2 size={16} className="spin"/> Analyzing image…</> : <><Sparkles size={16}/> Analyze Photo</>}
-          </button>
-          {error && <div className="notice error" style={{ marginTop: 12 }}><AlertCircle size={15} style={{ verticalAlign: "-3px", marginRight: 5 }}/>{error}</div>}
         </div>
-      </div>
+
+        <UploadDropzone file={file} onFile={setFile}/>
+
+        <button
+          className="btn btn-primary"
+          disabled={!file || busy}
+          style={{ width: "100%", marginTop: 14, opacity: (!file || busy) ? 0.55 : 1 }}
+          onClick={scan}
+        >
+          {busy ? <><Loader2 size={16} className="spin"/> Analyzing image…</> : <><Sparkles size={16}/> Analyze Photo</>}
+        </button>
+
+        {error && (
+          <div className="notice error" style={{ marginTop: 12 }}>
+            <AlertCircle size={15} style={{ verticalAlign: "-3px", marginRight: 5 }}/>
+            {error}
+          </div>
+        )}
+
+        <div className="feature-card" style={{ marginTop: 14, minHeight: "auto", padding: "12px 14px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div className="feature-icon" style={{ width: 26, height: 26, borderRadius: 8, margin: 0 }}><ScanSearch size={14}/></div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>Side-View Quality & Classification</h3>
+          </div>
+          <p className="page-copy" style={{ fontSize: 11, lineHeight: 1.45 }}>
+            🟢 <b>LIGHT GREEN</b>: Flank & torso visible at correct side angle (Weight & BCS calculated).
+            <br/>
+            🔴 <b>RED</b>: Front/rear-facing, grazing, or distant profile (Weight gated).
+          </p>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section-head" style={{ marginTop: 0 }}>
+          <div>
+            <h2>2. Uploaded image</h2>
+            <p className="page-copy">Preview of the goat photo before analysis.</p>
+          </div>
+        </div>
+
+        <div className="preview" style={{ minHeight: 360 }}>
+          {preview ? (
+            <img src={preview} alt="Uploaded goat" />
+          ) : (
+            <div className="empty">
+              <div style={{ fontSize: 32, marginBottom: 8 }}>◉</div>
+              No goat image selected
+            </div>
+          )}
+        </div>
+      </section>
     </div>
 
     {/* Limitations & Requirements of Weight Estimation Box */}
