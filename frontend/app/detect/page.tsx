@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
-import { AlertCircle, CircleCheck, Loader2, ScanSearch, Sparkles, RotateCcw } from "lucide-react";
+import { useState, useCallback } from "react";
+import { AlertCircle, CircleCheck, Loader2, ScanSearch, Sparkles, RotateCcw, Sliders, Check } from "lucide-react";
 import { postForm } from "@/lib/api";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { useAnalysis, DetectResponse } from "@/lib/AnalysisContext";
@@ -11,6 +11,9 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export default function GoatDetectionPage() {
   const { detect, setDetect, resetDetect } = useAnalysis();
   const { file, preview, result, busy, error, viewMode } = detect;
+  const [precisionMode, setPrecisionMode] = useState(false);
+  const [recalibratingId, setRecalibratingId] = useState<number | null>(null);
+  const [customHeights, setCustomHeights] = useState<Record<number, string>>({});
 
   const setFile = useCallback(
     (f: File | null) => {
@@ -40,6 +43,61 @@ export default function GoatDetectionPage() {
       setDetect({ result: res, busy: false });
     } catch (e) {
       setDetect({ error: e instanceof Error ? e.message : "Goat detection failed.", busy: false });
+    }
+  }
+
+  async function handleRecalibrate(goatId: number, cohort: string, customHeight?: number) {
+    if (!result) return;
+    const predIndex = result.predictions.findIndex((p) => (p.id ?? 0) === goatId);
+    if (predIndex === -1) return;
+    const pred = result.predictions[predIndex];
+    if (!pred.measurements) return;
+
+    setRecalibratingId(goatId);
+    try {
+      const res = await fetch(`${API}/api/detect/recalibrate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goat_id: goatId,
+          cohort: cohort,
+          custom_height_cm: customHeight,
+          measurements: pred.measurements,
+        }),
+      });
+      if (!res.ok) throw new Error("Recalibration failed");
+      const data = await res.json();
+
+      const updated = [...result.predictions];
+      updated[predIndex] = {
+        ...pred,
+        weight_kg: data.weight_kg,
+        weight_margin_kg: data.weight_margin_kg,
+        bcs_score: data.bcs_score,
+        bcs_label: data.bcs_label,
+        cohort: data.cohort,
+        withers_height_cm: data.withers_height_cm,
+        measurements: data.measurements,
+      };
+
+      setDetect({
+        result: {
+          ...result,
+          predictions: updated,
+        },
+      });
+    } catch (err) {
+      console.error("Recalibrate error:", err);
+    } finally {
+      setRecalibratingId(null);
+    }
+  }
+
+  async function handleBatchCohort(cohort: string) {
+    if (!result) return;
+    const valids = result.predictions.filter((p) => p.is_valid_side && p.measurements && p.id);
+    for (const g of valids) {
+      await handleRecalibrate(g.id!, cohort);
     }
   }
 
@@ -295,12 +353,81 @@ export default function GoatDetectionPage() {
         </div>
 
         {/* Output Breakdown Located at the BOTTOM of the Image */}
-        <div className="section-head">
+        <div className="section-head" style={{ alignItems: "center" }}>
           <div>
             <h2>Goat Side-View Breakdown ({result.goats_detected})</h2>
             <p className="page-copy">Detailed side quality percentage and weight feasibility for each detected goat.</p>
           </div>
+
+          {/* Precision Calibration Toggle */}
+          <button
+            type="button"
+            className={`btn ${precisionMode ? "btn-primary" : "btn-secondary"}`}
+            style={{ fontSize: 12, padding: "7px 14px", display: "inline-flex", alignItems: "center", gap: 6 }}
+            onClick={() => setPrecisionMode(!precisionMode)}
+          >
+            <Sliders size={14} />
+            <span>{precisionMode ? "🔬 Precision Calibrator Active" : "🔬 Enable Precision Calibration"}</span>
+          </button>
         </div>
+
+        {/* Precision Calibration Explanatory Banner & Batch Bar */}
+        {precisionMode && (
+          <div className="card" style={{ padding: 14, marginBottom: 14, background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 14 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <b style={{ color: "var(--green-dark, #1f5834)", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Sliders size={14} /> Precision Calibration: Per-Goat Life-Stage Stature Tuning
+                </b>
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)", maxWidth: 680, lineHeight: 1.45 }}>
+                  Because 2D photos lack laser depth, a 15 kg young goat up close has the same pixel height as a 40 kg adult further away.
+                  Select the life-stage cohort or enter measured withers height (cm) for individual goats below to achieve laboratory accuracy (±1.2 kg).
+                </p>
+              </div>
+
+              {/* Batch Life-Stage Shortcut Bar */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--ink)", marginRight: 2 }}>Batch Apply:</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 10, padding: "4px 10px", borderRadius: 8 }}
+                  onClick={() => handleBatchCohort("kid")}
+                  title="Under 6 months (~38 cm height, 8-15 kg)"
+                >
+                  All Kids (&lt;6m)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 10, padding: "4px 10px", borderRadius: 8 }}
+                  onClick={() => handleBatchCohort("yearling")}
+                  title="6 to 14 months (~46 cm height, 15-25 kg)"
+                >
+                  All Yearlings (6-14m)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 10, padding: "4px 10px", borderRadius: 8 }}
+                  onClick={() => handleBatchCohort("adult")}
+                  title="Mature adult domestic (~62 cm height, 30-45 kg)"
+                >
+                  All Adults (14m+)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 10, padding: "4px 10px", borderRadius: 8 }}
+                  onClick={() => handleBatchCohort("heavy")}
+                  title="Boer / meat buck (~74 cm height, 50-80 kg)"
+                >
+                  All Heavy Boer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {result.predictions.length === 0 ? (
           <div className="card empty" style={{ padding: 28, textAlign: "center", marginTop: 10 }}>
@@ -318,6 +445,8 @@ export default function GoatDetectionPage() {
               const qualityColor = qualityScore >= 70 ? "#27683d" : qualityScore >= 45 ? "#8c611b" : "#a33a3a";
               const qualityBg = qualityScore >= 70 ? "#e7f5ea" : qualityScore >= 45 ? "#fff0d2" : "#ffe1e1";
               const confLabel = confScore >= 85 ? "HIGH" : confScore >= 60 ? "MEDIUM" : "LOW";
+              const isRecalibrating = recalibratingId === p.id;
+              const activeCohort = p.cohort || "adult";
 
               return (
                 <div
@@ -350,11 +479,22 @@ export default function GoatDetectionPage() {
                   {/* ── Weight or Unavailable ── */}
                   {p.weight_kg != null ? (
                     <div style={{ marginBottom: 6 }}>
-                      <div style={{ fontSize: 28, fontWeight: 850, color: "var(--ink)", letterSpacing: "-0.03em", lineHeight: 1.1 }}>
-                        {p.weight_kg.toFixed(1)} <span style={{ fontSize: 16, fontWeight: 700 }}>kg</span>
+                      <div style={{ fontSize: 28, fontWeight: 850, color: "var(--ink)", letterSpacing: "-0.03em", lineHeight: 1.1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                        {isRecalibrating ? (
+                          <span style={{ fontSize: 20, color: "var(--muted)" }}><Loader2 size={18} className="spin" style={{ display: "inline-block", verticalAlign: "-2px" }} /> Updating…</span>
+                        ) : (
+                          <>
+                            {p.weight_kg.toFixed(1)} <span style={{ fontSize: 16, fontWeight: 700 }}>kg</span>
+                          </>
+                        )}
                       </div>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
                         Confidence: {confLabel}
+                        {p.withers_height_cm && (
+                          <span style={{ marginLeft: 6, fontWeight: 600, color: "var(--green-dark)" }}>
+                            · Prior: {Math.round(p.withers_height_cm)} cm
+                          </span>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -373,6 +513,85 @@ export default function GoatDetectionPage() {
                     <div className="bcs-row" style={{ marginBottom: 10 }}>
                       <span className="bcs-badge">BCS {p.bcs_score.toFixed(1)}</span>
                       <span className="bcs-label" style={{ color: "var(--muted)" }}>{p.bcs_label}</span>
+                    </div>
+                  )}
+
+                  {/* ── Precision Calibrator Selector (Per Goat) ── */}
+                  {precisionMode && p.is_valid_side && p.measurements && (
+                    <div style={{ margin: "6px 0 10px", padding: "8px 9px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)", marginBottom: 6 }}>
+                        <span>Cohort Calibration</span>
+                        <span style={{ color: "var(--green-dark)" }}>
+                          {activeCohort === "kid" ? "Kid (<6m)" : activeCohort === "yearling" || activeCohort === "young" ? "Yearling (6-14m)" : activeCohort === "heavy" ? "Boer / Heavy" : activeCohort === "custom" ? "Custom Height" : "Adult (14m+)"}
+                        </span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                        <button
+                          type="button"
+                          className={`btn ${activeCohort === "kid" ? "btn-primary" : "btn-secondary"}`}
+                          style={{ fontSize: 9, padding: "5px 4px", justifyContent: "center" }}
+                          onClick={() => handleRecalibrate(p.id!, "kid")}
+                          disabled={isRecalibrating}
+                        >
+                          Kid (&lt;6m · 38cm)
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ${activeCohort === "yearling" || activeCohort === "young" ? "btn-primary" : "btn-secondary"}`}
+                          style={{ fontSize: 9, padding: "5px 4px", justifyContent: "center" }}
+                          onClick={() => handleRecalibrate(p.id!, "yearling")}
+                          disabled={isRecalibrating}
+                        >
+                          Yearling (6-14m · 46cm)
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ${activeCohort === "adult" && !customHeights[p.id!] ? "btn-primary" : "btn-secondary"}`}
+                          style={{ fontSize: 9, padding: "5px 4px", justifyContent: "center" }}
+                          onClick={() => handleRecalibrate(p.id!, "adult")}
+                          disabled={isRecalibrating}
+                        >
+                          Adult (14m+ · 62cm)
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ${activeCohort === "heavy" ? "btn-primary" : "btn-secondary"}`}
+                          style={{ fontSize: 9, padding: "5px 4px", justifyContent: "center" }}
+                          onClick={() => handleRecalibrate(p.id!, "heavy")}
+                          disabled={isRecalibrating}
+                        >
+                          Boer Buck (74cm)
+                        </button>
+                      </div>
+
+                      {/* Manual withers height input */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, paddingTop: 6, borderTop: "1px dashed var(--line)" }}>
+                        <span style={{ fontSize: 10, color: "var(--muted)" }}>Custom height:</span>
+                        <input
+                          type="number"
+                          min={25}
+                          max={95}
+                          placeholder={String(p.withers_height_cm ? Math.round(p.withers_height_cm) : 45)}
+                          value={customHeights[p.id!] || ""}
+                          onChange={(e) => setCustomHeights({ ...customHeights, [p.id!]: e.target.value })}
+                          style={{ width: 50, padding: "2px 5px", fontSize: 11, borderRadius: 6, border: "1px solid var(--line)" }}
+                        />
+                        <span style={{ fontSize: 10, color: "var(--muted)" }}>cm</span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ fontSize: 10, padding: "2px 7px", marginLeft: "auto" }}
+                          disabled={!customHeights[p.id!] || isRecalibrating}
+                          onClick={() => {
+                            const val = parseFloat(customHeights[p.id!]);
+                            if (!isNaN(val) && val > 20) {
+                              handleRecalibrate(p.id!, "custom", val);
+                            }
+                          }}
+                        >
+                          Apply
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -407,6 +626,10 @@ export default function GoatDetectionPage() {
                       <div>Angle Category: {p.side_category || "Standard"}</div>
                       <div>Weight Feasibility: {p.is_valid_side ? "Ready for Weight" : "Not Usable"}</div>
                       <div>Body Visibility: {p.visibility_pct != null ? `${p.visibility_pct}%` : "100%"}</div>
+                      {p.cohort && <div>Calibrated Cohort: {p.cohort}</div>}
+                      {p.withers_height_cm && <div>Withers Stature: {Math.round(p.withers_height_cm)} cm</div>}
+                      {p.measurements?.body_length && <div>Body Length: {p.measurements.body_length} cm</div>}
+                      {p.measurements?.girth && <div>Heart Girth: {p.measurements.girth} cm</div>}
                       {p.weight_kg != null && <div>Live Weight: {p.weight_kg.toFixed(1)} kg</div>}
                       {p.bcs_score != null && <div>BCS: {p.bcs_score.toFixed(1)} ({p.bcs_label})</div>}
                       {p.weight_margin_kg != null && <div>Weight Margin: ±{p.weight_margin_kg} kg (95% CI)</div>}

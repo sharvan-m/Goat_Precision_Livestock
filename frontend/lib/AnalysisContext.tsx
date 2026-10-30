@@ -21,6 +21,9 @@ export type DetectPrediction = {
   weight_margin_kg?: number | null;
   bcs_score?: number | null;
   bcs_label?: string | null;
+  cohort?: string | null;
+  withers_height_cm?: number | null;
+  measurements?: Record<string, any> | null;
 };
 
 export type DetectResponse = {

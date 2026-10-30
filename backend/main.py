@@ -17,10 +17,12 @@ import shutil
 import subprocess
 import threading
 import uuid
+import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Optional, Dict
 from urllib.parse import quote
+from pydantic import BaseModel
 
 import cv2
 import numpy as np
@@ -836,6 +838,7 @@ def roboflow_status():
 def _annotate_with_side_classification(
     image: np.ndarray,
     detections: list[DetectionResult],
+    cohort_overrides: Optional[Dict[str, Any]] = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], int, int]:
     """
     Annotate goats strictly based on side classification for weight feasibility.
@@ -1043,11 +1046,27 @@ def _annotate_with_side_classification(
         margin_kg = None
         bcs_score = None
         bcs_label = None
+        meas = None
+
+        cohort_opt = None
+        custom_prior = None
+        if cohort_overrides:
+            val = cohort_overrides.get(str(i + 1))
+            if isinstance(val, (int, float)):
+                custom_prior = float(val)
+            elif isinstance(val, str):
+                cohort_opt = val
 
         # STRICT GATING: Only calculate weight & BCS if the angle and profile are valid!
         if is_valid:
             try:
-                meas = extractor.extract_features(det.mask, det.box, is_grazing=is_grazing)
+                meas = extractor.extract_features(
+                    det.mask,
+                    det.box,
+                    is_grazing=is_grazing,
+                    cohort=cohort_opt,
+                    withers_height_prior=custom_prior,
+                )
                 if regressor is not None:
                     full_p = regressor.predict_full(meas)
                     pred_weight = full_p["weight_kg"]
@@ -1077,6 +1096,9 @@ def _annotate_with_side_classification(
             "weight_margin_kg": margin_kg,
             "bcs_score": bcs_score,
             "bcs_label": bcs_label,
+            "cohort": meas.get("assigned_cohort", "adult") if meas else None,
+            "withers_height_cm": meas.get("height") if meas else None,
+            "measurements": meas,
         })
 
     # Render clean full-body mask overlays (LIGHT GREEN for valid side view, RED for invalid angle)
@@ -1121,11 +1143,19 @@ def _annotate_with_side_classification(
 async def detect_goats(
     file: UploadFile = File(...),
     detector: str = Form("roboflow"),
+    cohort_overrides: Optional[str] = Form(None),
 ):
     allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported image type.")
+
+    cohort_map = None
+    if cohort_overrides:
+        try:
+            cohort_map = json.loads(cohort_overrides)
+        except Exception:
+            cohort_map = None
 
     image_bytes = await file.read()
     image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
@@ -1165,7 +1195,7 @@ async def detect_goats(
                 ))
 
             annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(
-                image, rf_dets
+                image, rf_dets, cohort_overrides=cohort_map
             )
             _, enc = cv2.imencode(".jpg", annotated)
             annotated_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
@@ -1211,7 +1241,9 @@ async def detect_goats(
         except Exception:
             pass
 
-    annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(image, detections)
+    annotated, predictions, valid_count, invalid_count = _annotate_with_side_classification(
+        image, detections, cohort_overrides=cohort_map
+    )
     _, enc = cv2.imencode(".jpg", annotated)
     annotated_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
 
@@ -1227,6 +1259,81 @@ async def detect_goats(
         "image_width": w,
         "image_height": h,
         "annotation_source": "Side Angle Validated (Green=Valid, Red=Invalid)",
+    }
+
+
+class RecalibrateItem(BaseModel):
+    goat_id: int
+    cohort: Optional[str] = "adult"
+    custom_height_cm: Optional[float] = None
+    measurements: Dict[str, Any]
+
+
+@app.post("/api/detect/recalibrate")
+async def recalibrate_prediction(item: RecalibrateItem):
+    """
+    Recalibrate live weight & BCS for an already detected goat in milliseconds without re-uploading the image.
+    Uses withers height prior for the specified cohort (kid, yearling, adult, heavy) or custom height in cm.
+    """
+    meas = dict(item.measurements or {})
+    w_px = float(meas.get("withers_height_px") or 500.0)
+    bl_px = float(meas.get("body_length_px") or 600.0)
+    cd_px = float(meas.get("chest_girth_px") or 240.0)
+
+    cohort_priors = {
+        "kid": 38.0,
+        "yearling": 46.0,
+        "young": 46.0,
+        "adult": 62.0,
+        "heavy": 74.0,
+    }
+
+    if item.custom_height_cm is not None and item.custom_height_cm > 15.0:
+        target_h = float(item.custom_height_cm)
+        assigned = "custom"
+    elif item.cohort and item.cohort.lower() in cohort_priors:
+        assigned = item.cohort.lower()
+        target_h = cohort_priors[assigned]
+    else:
+        assigned = "adult"
+        target_h = 62.0
+
+    scale = target_h / max(w_px, 10.0)
+    w_cm = float(np.clip(w_px * scale, 28.0, 95.0))
+    bl_cm = float(np.clip(bl_px * scale, 30.0, 105.0))
+    girth_cm = float(np.clip((cd_px * scale) * 2.42, 32.0, 105.0))
+    width_cm = float(np.clip((cd_px * scale) * 0.72, 10.0, 42.0))
+
+    meas["body_length"] = round(bl_cm, 2)
+    meas["height"] = round(w_cm, 2)
+    meas["girth"] = round(girth_cm, 2)
+    meas["body_width"] = round(width_cm, 2)
+    meas["pixel_scale_cm"] = round(scale, 4)
+    meas["assigned_cohort"] = assigned
+
+    regressor = load_regressor()
+    if regressor is not None:
+        full_res = regressor.predict_full(meas)
+        pred_w = full_res["weight_kg"]
+        margin_kg = full_res["margin_kg"]
+        bcs_score = full_res["bcs_score"]
+        bcs_label = full_res["bcs_label"]
+    else:
+        bcs_score = float(meas.get("bcs_score") or 3.0)
+        bcs_factor = 1.0 + 0.12 * (bcs_score - 3.0)
+        pred_w = round(float(np.clip((bl_cm * (girth_cm ** 2)) / 10950.0 * bcs_factor, 8.0, 85.0)), 1)
+        margin_kg = 2.5
+        bcs_label = meas.get("bcs_label", "Optimal / Ideal")
+
+    return {
+        "goat_id": item.goat_id,
+        "cohort": assigned,
+        "withers_height_cm": w_cm,
+        "weight_kg": pred_w,
+        "weight_margin_kg": margin_kg,
+        "bcs_score": bcs_score,
+        "bcs_label": bcs_label,
+        "measurements": meas,
     }
 
 

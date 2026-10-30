@@ -11,6 +11,15 @@ import cv2
 from goat_weight_system.config import DEFAULT_PIXEL_SCALE
 
 
+COHORT_HEIGHT_PRIORS: Dict[str, float] = {
+    "kid": 38.0,        # Kid under 6 months (~8-15 kg)
+    "yearling": 46.0,   # Young yearling 6-14 months (~15-25 kg)
+    "young": 46.0,
+    "adult": 62.0,      # Standard adult domestic goat (~30-45 kg)
+    "heavy": 74.0,      # Boer / large meat breed buck (~50-80 kg)
+}
+
+
 class MeasurementExtractor:
     """Extracts morphological and torso features from segmentation masks with perspective correction."""
 
@@ -29,6 +38,8 @@ class MeasurementExtractor:
         torso_mask: Optional[np.ndarray] = None,
         torso_box: Optional[np.ndarray] = None,
         is_grazing: bool = False,
+        cohort: Optional[str] = None,
+        withers_height_prior: Optional[float] = None,
     ) -> Dict[str, float]:
         """
         Extract complete morphological measurement dictionary from segmentation mask.
@@ -164,8 +175,9 @@ class MeasurementExtractor:
 
         # -----------------------------------------------------------------
         # SCALE CALIBRATION (Pixels to Centimeters)
-        # Adult domestic goat standard median withers height = 62.0 cm
+        # Supports per-cohort priors (Kid, Yearling, Adult, Heavy) and custom height
         # -----------------------------------------------------------------
+        assigned_cohort = "adult"
         if pixel_scale_override is not None:
             scale = pixel_scale_override
             calibrated = True
@@ -173,27 +185,40 @@ class MeasurementExtractor:
             scale = self.pixel_scale_cm
             calibrated = True
         else:
-            # Anatomical prior: Standard domestic goat withers height ~ 62 cm
-            scale = 62.0 / max(withers_height_px, 10.0)
+            if withers_height_prior is not None and withers_height_prior > 15.0:
+                target_height = float(withers_height_prior)
+                assigned_cohort = cohort or "custom"
+            elif cohort and cohort.lower() in COHORT_HEIGHT_PRIORS:
+                assigned_cohort = cohort.lower()
+                target_height = COHORT_HEIGHT_PRIORS[assigned_cohort]
+            else:
+                # Automatic life-stage inference based on morphological maturity:
+                # Slender/shallow barrel (low chest depth ratio and torso ratio) indicates juvenile
+                if depth_ratio < 0.44 and torso_ratio < 0.45:
+                    target_height = 46.0  # Yearling prior
+                    assigned_cohort = "yearling"
+                else:
+                    target_height = 62.0  # Standard adult prior
+                    assigned_cohort = "adult"
+
+            scale = target_height / max(withers_height_px, 10.0)
             calibrated = False
 
         # Metric conversions (cm)
         withers_height_cm = float(withers_height_px * scale)
-        # Body length in cm: In domestic goats, BL is ~1.05 to 1.15 x height
         body_length_cm = float(body_length_px * scale)
         chest_depth_cm = float(chest_depth_px * scale)
 
         # Heart girth in cm: In caprines, heart girth circumference HG ~ 2.42 * chest depth
-        # Average adult goat: chest depth = 28 cm -> HG = 68 cm
         chest_girth_cm = float(chest_depth_cm * 2.42)
         body_width_cm = float(chest_depth_cm * 0.72)
         mask_area_cm2 = float(mask_area_px * (scale ** 2))
 
-        # Enforce realistic veterinary anatomical limits
-        withers_height_cm = float(np.clip(withers_height_cm, 40.0, 85.0))
-        body_length_cm = float(np.clip(body_length_cm, 42.0, 92.0))
-        chest_girth_cm = float(np.clip(chest_girth_cm, 45.0, 92.0))
-        body_width_cm = float(np.clip(body_width_cm, 16.0, 36.0))
+        # Enforce realistic veterinary anatomical limits across kids to large bucks
+        withers_height_cm = float(np.clip(withers_height_cm, 28.0, 95.0))
+        body_length_cm = float(np.clip(body_length_cm, 30.0, 105.0))
+        chest_girth_cm = float(np.clip(chest_girth_cm, 32.0, 105.0))
+        body_width_cm = float(np.clip(body_width_cm, 10.0, 42.0))
 
         # -----------------------------------------------------------------
         # BODY CONDITION SCORE (BCS 1.0 to 5.0)
@@ -239,6 +264,7 @@ class MeasurementExtractor:
             "bcs_score": bcs_score,
             "bcs_label": bcs_label,
             # Calibrated metric features (cm)
+            "assigned_cohort": assigned_cohort,
             "body_length": round(body_length_cm, 2),
             "height": round(withers_height_cm, 2),
             "girth": round(chest_girth_cm, 2),
