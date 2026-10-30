@@ -16,6 +16,10 @@ type Prediction = {
   is_valid_side?: boolean;
   side_category?: string;
   rejection_reasons?: string[];
+  weight_kg?: number | null;
+  weight_margin_kg?: number | null;
+  bcs_score?: number | null;
+  bcs_label?: string | null;
 };
 
 type Response = {
@@ -265,7 +269,7 @@ export default function GoatDetectionPage() {
                 </div>
 
                 {/* Side Quality Progress Bar */}
-                <div style={{ height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 3, marginBottom: 12, overflow: "hidden" }}>
+                <div style={{ height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 3, marginBottom: 10, overflow: "hidden" }}>
                   <div
                     style={{
                       width: `${Math.min(100, Math.max(0, p.side_view_score || 0))}%`,
@@ -276,7 +280,47 @@ export default function GoatDetectionPage() {
                   />
                 </div>
 
+                {/* Live Weight & BCS Display */}
+                {p.weight_kg != null ? (
+                  <div style={{ margin: "10px 0 12px", padding: "10px 12px", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--fg-muted, #888)", fontWeight: 700 }}>Estimated Live Weight</span>
+                      {p.weight_margin_kg != null && <span style={{ fontSize: 11, color: "var(--fg-muted, #888)" }}>± {p.weight_margin_kg} kg (95% CI)</span>}
+                    </div>
+                    <div style={{ fontSize: 24, fontWeight: 850, color: "#10b981", margin: "2px 0 6px" }}>
+                      {p.weight_kg.toFixed(1)} <span style={{ fontSize: 15, fontWeight: 600 }}>kg</span>
+                    </div>
+                    {p.bcs_score != null && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 6, borderTop: "1px solid rgba(16, 185, 129, 0.15)" }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "#10b981", color: "#062817" }}>
+                          BCS {p.bcs_score.toFixed(1)}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--fg, #e2e8f0)" }}>
+                          {p.bcs_label}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ margin: "10px 0 12px", padding: "8px 10px", background: "rgba(239, 68, 68, 0.06)", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: 8, fontSize: 12, color: "var(--fg-muted, #888)" }}>
+                    <span style={{ fontWeight: 600, color: "#ef4444" }}>Weight gated: </span>
+                    Side profile not optimal for exact biometric scale
+                  </div>
+                )}
+
                 <div className="result-grid">
+                  <div className="kv">
+                    <span>Live Weight</span>
+                    <b style={{ color: p.weight_kg != null ? "#10b981" : "#ef4444" }}>
+                      {p.weight_kg != null ? `${p.weight_kg.toFixed(1)} kg` : "Angle Blocked"}
+                    </b>
+                  </div>
+                  <div className="kv">
+                    <span>Body Condition</span>
+                    <b style={{ color: p.bcs_score != null ? "#10b981" : "inherit" }}>
+                      {p.bcs_score != null ? `BCS ${p.bcs_score.toFixed(1)}` : "—"}
+                    </b>
+                  </div>
                   <div className="kv">
                     <span>Weight Feasibility</span>
                     <b style={{ color: p.is_valid_side ? "#10b981" : "#ef4444" }}>
