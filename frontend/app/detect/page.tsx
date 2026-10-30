@@ -107,32 +107,56 @@ export default function GoatDetectionPage() {
     </div>
 
     {/* Limitations & Requirements of Weight Estimation Box */}
-    <div className="card" style={{ marginTop: 14, padding: "14px 18px", background: "rgba(255, 255, 255, 0.02)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <AlertCircle size={16} color="#f59e0b" />
-        <h4 style={{ margin: 0, fontSize: 13, fontWeight: 750, color: "#f59e0b", letterSpacing: "0.02em", textTransform: "uppercase" }}>
-          Physical Requirements & Limitations for Weight Estimation
-        </h4>
+    <div className="card" style={{ marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: "#fef3c7", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <AlertCircle size={17} color="#b45309" />
+        </div>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)", letterSpacing: "-0.01em" }}>
+            Physical Requirements & Limitations for Weight Estimation
+          </h3>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            2D computer vision biometrics require specific posture and visibility to accurately calculate live weight (±2.5 kg).
+          </p>
+        </div>
       </div>
-      <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--fg-muted, #94a3b8)", lineHeight: 1.5 }}>
-        2D vision biometric weighing uses anatomical proportions. To obtain an accurate weight (±2.5 kg), the photograph must satisfy:
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
-          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>1. 90° Full Side Profile</b>
-          Entire flank and barrel must face the camera. Frontal, rear, or angled perspectives cannot measure chest depth.
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
+        <div style={{ padding: "12px 14px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 12 }}>
+          <b style={{ color: "var(--green-dark, #1f5834)", fontSize: 12, display: "block", marginBottom: 4, fontWeight: 750 }}>
+            1. 90° Full Side Profile
+          </b>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #718078)", lineHeight: 1.45 }}>
+            Entire flank and barrel must face the camera. Frontal, rear, or angled perspectives cannot measure barrel depth.
+          </p>
         </div>
-        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
-          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>2. Standing Upright (Not Grazing)</b>
-          Head must be raised or neutral. Grazing (head to ground) stretches the neck and falsely distorts body length.
+
+        <div style={{ padding: "12px 14px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 12 }}>
+          <b style={{ color: "var(--green-dark, #1f5834)", fontSize: 12, display: "block", marginBottom: 4, fontWeight: 750 }}>
+            2. Standing Upright (Not Grazing)
+          </b>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #718078)", lineHeight: 1.45 }}>
+            Head must be raised or neutral. Grazing (head to ground) stretches the neck and falsely distorts body length.
+          </p>
         </div>
-        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
-          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>3. Full Hoof & Leg Visibility</b>
-          Legs must not be buried in tall pasture grass or mud, which corrupts the stature scale calibration.
+
+        <div style={{ padding: "12px 14px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 12 }}>
+          <b style={{ color: "var(--green-dark, #1f5834)", fontSize: 12, display: "block", marginBottom: 4, fontWeight: 750 }}>
+            3. Full Hoof & Leg Visibility
+          </b>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #718078)", lineHeight: 1.45 }}>
+            Legs must not be buried in tall pasture grass or mud, which corrupts the stature scale calibration.
+          </p>
         </div>
-        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
-          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>4. Foreground Proximity (&gt;72px)</b>
-          Animal must be in the foreground. Distant background goats are gated out to prevent pixel scaling errors.
+
+        <div style={{ padding: "12px 14px", background: "var(--surface-soft, #f8faf7)", border: "1px solid var(--line, #dfe7e0)", borderRadius: 12 }}>
+          <b style={{ color: "var(--green-dark, #1f5834)", fontSize: 12, display: "block", marginBottom: 4, fontWeight: 750 }}>
+            4. Foreground Proximity (&gt;72px)
+          </b>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #718078)", lineHeight: 1.45 }}>
+            Animal must be in the foreground. Distant background goats are gated out to prevent pixel scaling errors.
+          </p>
         </div>
       </div>
     </div>
