@@ -11,8 +11,7 @@ import {
 } from "lucide-react";
 
 const items = [
-  ["/detect", "Goat Detection", ScanSearch],
-  ["/analyze", "Analyze", Camera],
+  ["/detect", "Analyze", Camera],
   ["/anemia", "Anemia / FAMACHA", HeartPulse],
   ["/records", "Herd Records", Database],
   ["/system", "System", Settings],
@@ -35,7 +34,7 @@ export default function Sidebar() {
         {items.map(([href, label, Icon]) => {
           const active =
             pathname === href ||
-            (href !== "/analyze" && pathname.startsWith(`${href}/`));
+            pathname.startsWith(`${href}/`);
 
           return (
             <Link

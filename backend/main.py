@@ -885,10 +885,10 @@ def _annotate_with_side_classification(
         if y1 <= 1:
             reasons.append("Clipped at top border")
 
-        # 2. Relative size: must be large enough in frame for biometric weight estimation
+        # 2. Relative & absolute size: must be large enough in frame for biometric weight estimation
         area_ratio = box_area / float(w * h)
-        if area_ratio < 0.015 or box_w < (0.08 * w) or box_h < (0.12 * h):
-            reasons.append("Too small / distant for weight estimation")
+        if area_ratio < 0.020 or box_w < 72 or box_h < 72 or box_area < 5800:
+            reasons.append("Too distant / low resolution for weight estimation")
 
         # 3. Direct mask occlusion: another animal's body directly overlapping this mask
         m1 = det.mask > 0
@@ -1020,14 +1020,34 @@ def _annotate_with_side_classification(
             cx = int((x1 + x2) / 2)
             cy = int((y1 + y2) / 2)
 
+        # Detect grazing posture (anterior head/snout down near hooves/ground)
+        is_grazing = False
+        if len(x_coords_all) > 50 and len(y_coords_all) > 50:
+            xmin_m, xmax_m = x_coords_all.min(), x_coords_all.max()
+            ymin_m, ymax_m = y_coords_all.min(), y_coords_all.max()
+            h_span = max(1, ymax_m - ymin_m)
+            w_span = max(1, xmax_m - xmin_m)
+
+            left_mask = m1 & (np.arange(w)[None, :] < (xmin_m + 0.20 * w_span))
+            right_mask = m1 & (np.arange(w)[None, :] > (xmax_m - 0.20 * w_span))
+            ly = np.where(left_mask)[0]
+            ry = np.where(right_mask)[0]
+
+            l_rel = (np.mean(ly) - ymin_m) / float(h_span) if len(ly) > 0 else 0.5
+            r_rel = (np.mean(ry) - ymin_m) / float(h_span) if len(ry) > 0 else 0.5
+
+            if max(l_rel, r_rel) > 0.70 and min(l_rel, r_rel) < 0.58:
+                is_grazing = True
+
         pred_weight = None
         margin_kg = None
         bcs_score = None
         bcs_label = None
 
-        if is_valid or len(reasons) <= 1:
+        # STRICT GATING: Only calculate weight & BCS if the angle and profile are valid!
+        if is_valid:
             try:
-                meas = extractor.extract_features(det.mask, det.box)
+                meas = extractor.extract_features(det.mask, det.box, is_grazing=is_grazing)
                 if regressor is not None:
                     full_p = regressor.predict_full(meas)
                     pred_weight = full_p["weight_kg"]

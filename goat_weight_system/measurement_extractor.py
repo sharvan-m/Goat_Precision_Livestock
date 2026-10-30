@@ -28,6 +28,7 @@ class MeasurementExtractor:
         pixel_scale_override: Optional[float] = None,
         torso_mask: Optional[np.ndarray] = None,
         torso_box: Optional[np.ndarray] = None,
+        is_grazing: bool = False,
     ) -> Dict[str, float]:
         """
         Extract complete morphological measurement dictionary from segmentation mask.
@@ -103,6 +104,10 @@ class MeasurementExtractor:
             rad = np.radians(np.clip(orientation_angle_deg, 0.0, 60.0))
             cos_factor = max(np.cos(rad), 0.60)
             body_length_px = float(raw_length_px / cos_factor)
+            # Grazing posture compensation: head down stretches neck forward by ~22%.
+            # Truncate extension so length strictly represents shoulder-point to pin-bone.
+            if is_grazing:
+                body_length_px *= 0.78
             body_width_px = float(raw_width_px)
             eccentricity = float(np.sqrt(max(0.0, 1.0 - (minor_axis_px / max(major_axis_px, 1.0)) ** 2)))
 

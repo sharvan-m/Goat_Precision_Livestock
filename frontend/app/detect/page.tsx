@@ -65,11 +65,10 @@ export default function GoatDetectionPage() {
   return <>
     <div className="page-top">
       <div>
-        <div className="eyebrow">SIDE-VIEW ANGLE & WEIGHT FEASIBILITY</div>
-        <h1>Goat Detection & Side Classification</h1>
+        <div className="eyebrow">ANALYZE · VISION BIOMETRICS</div>
+        <h1>Analyze: Detection, Weight & BCS</h1>
         <p className="page-copy">
-          Detects every goat in the frame and evaluates side-angle visibility for precision weight estimation.
-          Valid side angles are annotated in <b>LIGHT GREEN</b>; invalid/other angles in <b>RED</b>.
+          Detects every goat in the frame, validates side-profile angle feasibility, and calculates live weight (kg) and Body Condition Score (BCS).
         </p>
       </div>
       <div className="status good">
@@ -85,13 +84,13 @@ export default function GoatDetectionPage() {
         <div>
           <div className="feature-card" style={{ marginBottom: 14 }}>
             <div className="feature-icon"><ScanSearch size={17}/></div>
-            <h3>Side-View Quality Classification</h3>
+            <h3>Side-View Quality & Weight Classification</h3>
             <p className="page-copy">
               Color-codes bounding masks with centered ID numbers (1, 2, 3...):
               <br/>
-              🟢 <b>LIGHT GREEN</b>: Flank & torso visible at the correct side angle (Weight estimation eligible).
+              🟢 <b>LIGHT GREEN</b>: Flank & torso visible at the correct side angle (Weight & BCS calculated).
               <br/>
-              🔴 <b>RED</b>: Front-facing, rear-facing, or non-side profile.
+              🔴 <b>RED</b>: Front-facing, rear-facing, grazing, or distant profile (Weight gated).
             </p>
           </div>
           <button
@@ -100,9 +99,40 @@ export default function GoatDetectionPage() {
             style={{ width: "100%", opacity: (!file || busy) ? 0.55 : 1 }}
             onClick={scan}
           >
-            {busy ? <><Loader2 size={16} className="spin"/> Analyzing angles…</> : <><Sparkles size={16}/> Detect & classify angles</>}
+            {busy ? <><Loader2 size={16} className="spin"/> Analyzing image…</> : <><Sparkles size={16}/> Analyze Photo</>}
           </button>
           {error && <div className="notice error" style={{ marginTop: 12 }}><AlertCircle size={15} style={{ verticalAlign: "-3px", marginRight: 5 }}/>{error}</div>}
+        </div>
+      </div>
+    </div>
+
+    {/* Limitations & Requirements of Weight Estimation Box */}
+    <div className="card" style={{ marginTop: 14, padding: "14px 18px", background: "rgba(255, 255, 255, 0.02)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <AlertCircle size={16} color="#f59e0b" />
+        <h4 style={{ margin: 0, fontSize: 13, fontWeight: 750, color: "#f59e0b", letterSpacing: "0.02em", textTransform: "uppercase" }}>
+          Physical Requirements & Limitations for Weight Estimation
+        </h4>
+      </div>
+      <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--fg-muted, #94a3b8)", lineHeight: 1.5 }}>
+        2D vision biometric weighing uses anatomical proportions. To obtain an accurate weight (±2.5 kg), the photograph must satisfy:
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
+          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>1. 90° Full Side Profile</b>
+          Entire flank and barrel must face the camera. Frontal, rear, or angled perspectives cannot measure chest depth.
+        </div>
+        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
+          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>2. Standing Upright (Not Grazing)</b>
+          Head must be raised or neutral. Grazing (head to ground) stretches the neck and falsely distorts body length.
+        </div>
+        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
+          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>3. Full Hoof & Leg Visibility</b>
+          Legs must not be buried in tall pasture grass or mud, which corrupts the stature scale calibration.
+        </div>
+        <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, fontSize: 11, lineHeight: 1.45 }}>
+          <b style={{ color: "#10b981", display: "block", marginBottom: 2 }}>4. Foreground Proximity (&gt;72px)</b>
+          Animal must be in the foreground. Distant background goats are gated out to prevent pixel scaling errors.
         </div>
       </div>
     </div>
@@ -302,9 +332,13 @@ export default function GoatDetectionPage() {
                     )}
                   </div>
                 ) : (
-                  <div style={{ margin: "10px 0 12px", padding: "8px 10px", background: "rgba(239, 68, 68, 0.06)", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: 8, fontSize: 12, color: "var(--fg-muted, #888)" }}>
-                    <span style={{ fontWeight: 600, color: "#ef4444" }}>Weight gated: </span>
-                    Side profile not optimal for exact biometric scale
+                  <div style={{ margin: "10px 0 12px", padding: "10px 12px", background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: 8, fontSize: 12 }}>
+                    <div style={{ fontWeight: 700, color: "#ef4444", marginBottom: 3 }}>
+                      Weight Estimation Gated
+                    </div>
+                    <div style={{ color: "var(--fg-muted, #94a3b8)", fontSize: 11 }}>
+                      {p.rejection_reasons && p.rejection_reasons.length > 0 ? p.rejection_reasons.join(", ") : "Angle or distance unsuitable for biometric weighing."}
+                    </div>
                   </div>
                 )}
 
@@ -312,7 +346,7 @@ export default function GoatDetectionPage() {
                   <div className="kv">
                     <span>Live Weight</span>
                     <b style={{ color: p.weight_kg != null ? "#10b981" : "#ef4444" }}>
-                      {p.weight_kg != null ? `${p.weight_kg.toFixed(1)} kg` : "Angle Blocked"}
+                      {p.weight_kg != null ? `${p.weight_kg.toFixed(1)} kg` : "Gated (Angle)"}
                     </b>
                   </div>
                   <div className="kv">
