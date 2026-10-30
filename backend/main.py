@@ -69,7 +69,6 @@ from backend.services.conjunctiva_roboflow import (
     conjunctiva_is_configured,
     conjunctiva_endpoint,
 )
-from backend.services.famacha_roboflow import famacha_is_configured
 from backend.services import anemia_pipeline
 from backend.services.side_classifier import (  # noqa: E402
     configured as side_classifier_configured,
@@ -1413,8 +1412,8 @@ def health():
         "roboflow_configured": roboflow_is_configured(),
         "conjunctiva_roboflow_configured": conjunctiva_is_configured(),
         "conjunctiva_model_id": os.getenv("CONJUNCTIVA_ROBOFLOW_MODEL_ID", ""),
-        "famacha_roboflow_configured": famacha_is_configured(),
-        "famacha_model_id": os.getenv("FAMACHA_ROBOFLOW_MODEL_ID", ""),
+        "famacha_model_configured": True,
+        "famacha_model_id": "cielab-famacha-v1",
         "ffmpeg_available": shutil.which("ffmpeg") is not None,
     }
 
