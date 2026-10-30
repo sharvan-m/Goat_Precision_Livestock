@@ -17,6 +17,9 @@ export type AnalysisResult = {
   side_class?: string | null;
   side_confidence?: number | null;
   weight_kg: number | null;
+  weight_margin_kg?: number | null;
+  bcs_score?: number | null;
+  bcs_label?: string | null;
   confidence: string | null;
   can_estimate_weight: boolean;
   rejection_reasons: string[];

@@ -73,6 +73,7 @@ from backend.services.side_classifier import (  # noqa: E402
     configured as side_classifier_configured,
     classify as classify_side,
 )
+from backend.services.torso_segmenter import detect_torso_and_body  # noqa: E402
 
 
 app = FastAPI(
@@ -582,6 +583,9 @@ def analyze_image_bytes(data: bytes, filename: str, pixel_scale: float):
         pred_weight = None
         confidence = None
         measurements = None
+        pred_bcs = None
+        bcs_label = None
+        weight_margin = None
 
         measurement_ready = bool(view_eval.can_estimate_weight)
 
@@ -594,16 +598,40 @@ def analyze_image_bytes(data: bytes, filename: str, pixel_scale: float):
             )
 
         if measurement_ready:
-            measurements = extractor.extract_features(det.mask, det.box)
+            # Run torso segmentation (team3-ohd3p model) for better biometric features
+            torso_info = {}
+            try:
+                ok_enc, jpg_buf = cv2.imencode(".jpg", frame)
+                if ok_enc:
+                    torso_info = detect_torso_and_body(
+                        jpg_buf.tobytes(),
+                        image_shape=frame.shape,
+                    )
+            except Exception:
+                torso_info = {}
+
+            measurements = extractor.extract_features(
+                det.mask,
+                det.box,
+                torso_mask=torso_info.get("torso_mask"),
+                torso_box=torso_info.get("torso_box"),
+            )
 
             if regressor is not None:
-                pred_weight = float(regressor.predict(measurements)[0])
+                full_result = regressor.predict_full(measurements)
+                pred_weight = full_result["weight_kg"]
+                pred_bcs = full_result["bcs_score"]
+                bcs_label = full_result["bcs_label"]
+                weight_margin = full_result["margin_kg"]
             else:
                 pred_weight = (
                     40.0
                     + measurements["body_length"] * 0.2
                     + measurements["girth"] * 0.3
                 )
+                pred_bcs = measurements.get("bcs_score", 3.0)
+                bcs_label = measurements.get("bcs_label", "Optimal / Ideal")
+                weight_margin = 5.0
 
             confidence, _ = ConfidenceCalculator.calculate_confidence(
                 view_eval,
@@ -667,6 +695,9 @@ def analyze_image_bytes(data: bytes, filename: str, pixel_scale: float):
             "side_class": side_class,
             "side_confidence": side_confidence,
             "weight_kg": round(pred_weight, 2) if pred_weight is not None else None,
+            "weight_margin_kg": round(weight_margin, 1) if weight_margin is not None else None,
+            "bcs_score": pred_bcs,
+            "bcs_label": bcs_label,
             "confidence": confidence,
             "can_estimate_weight": bool(measurement_ready),
             "rejection_reasons": list(view_eval.rejection_reasons or []),
@@ -749,6 +780,8 @@ def video_job(job_id: str, video_path: Path, frame_stride: int, pixel_scale: flo
             summary.append({
                 "goat_id": item["goat_id"],
                 "final_weight_kg": item["final_weight_kg"],
+                "final_bcs_score": item.get("final_bcs_score"),
+                "bcs_label": item.get("bcs_label"),
                 "best_view_score": item["best_view_score"],
                 "view_category": item["view_category"],
                 "side_class": "SIDE" if item["view_category"] in {"GOOD", "ACCEPTABLE"} else "NOT SIDE",
@@ -1220,7 +1253,8 @@ def health():
         "photo_video_detector_parity": True,
         "weight_model_name": regressor.model_name if regressor is not None else None,
         "records": len(read_records()),
-        "bcs_available": False,
+        "bcs_available": regressor is not None,
+        "torso_model_id": os.getenv("TORSO_ROBOFLOW_MODEL_ID", "goat-weight-prediction/2"),
         "roboflow_configured": roboflow_is_configured(),
         "conjunctiva_roboflow_configured": conjunctiva_is_configured(),
         "conjunctiva_model_id": os.getenv("CONJUNCTIVA_ROBOFLOW_MODEL_ID", ""),

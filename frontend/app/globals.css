@@ -97,6 +97,10 @@ h3{font-size:14px;margin:0 0 7px}
 .result-card{border:1px solid var(--line);border-radius:16px;padding:15px;background:#fff;margin-bottom:10px;animation:rise .4s ease both}
 .result-top{display:flex;justify-content:space-between;gap:10px;align-items:center}
 .result-big{font-size:26px;font-weight:850;margin:10px 0 2px}
+.result-margin{font-size:13px;font-weight:500;color:var(--muted);margin-left:4px}
+.bcs-row{display:flex;align-items:center;gap:8px;margin:6px 0 2px}
+.bcs-badge{display:inline-block;padding:3px 10px;border-radius:999px;background:#e8f5e9;color:#2e7d32;font-size:11px;font-weight:800;letter-spacing:.03em}
+.bcs-label{font-size:11px}
 .result-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
 .kv{padding:9px;border-radius:11px;background:#f5f8f4}.kv span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.kv b{display:block;margin-top:4px;font-size:12px}
 .status{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;font-size:10px;font-weight:850;white-space:nowrap}

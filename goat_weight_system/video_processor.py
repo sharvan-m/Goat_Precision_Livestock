@@ -302,6 +302,8 @@ class VideoProcessor:
             summary_item = {
                 "goat_id": f"GOAT_{goat_id:02d}",
                 "final_weight_kg": final_weight_kg,
+                "final_bcs_score": round(float(meas.get("bcs_score", 3.0)), 1) if meas else None,
+                "bcs_label": meas.get("bcs_label", "Optimal / Ideal") if meas else None,
                 "best_view_score": round(view_eval.view_score, 1),
                 "view_category": view_eval.category,
                 "valid_frames_count": len(candidates),

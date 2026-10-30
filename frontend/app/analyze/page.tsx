@@ -21,6 +21,8 @@ type ImageResponse = {
 type GoatVideoResult = {
   goat_id: string;
   final_weight_kg: number;
+  final_bcs_score?: number | null;
+  bcs_label?: string | null;
   best_view_score: number;
   view_category: string;
   side_class?: string | null;
@@ -180,9 +182,13 @@ function ImageOutput({result}:{result:ImageResponse}) {
 
 function ResultCard({r}:{r:AnalysisResult}) {
   const cls = statusClass(r.view_category);
+  const bcsScore = (r as any).bcs_score as number | null | undefined;
+  const bcsLabel = (r as any).bcs_label as string | null | undefined;
+  const marginKg = (r as any).weight_margin_kg as number | null | undefined;
   return <div className="result-card">
     <div className="result-top"><div className="goat-name"><span className="goat-number">{displayId(r.goat_id)}</span><h3>Goat {displayId(r.goat_id)}</h3></div><span className={`status ${cls}`}>{r.view_category} {r.view_score != null ? ` · ${r.view_score}/100` : ""}</span></div>
-    <div className="result-big">{r.weight_kg != null ? `${r.weight_kg.toFixed(1)} kg` : "Weight unavailable"}</div>
+    <div className="result-big">{r.weight_kg != null ? `${r.weight_kg.toFixed(1)} kg` : "Weight unavailable"}{r.weight_kg != null && marginKg != null ? <span className="result-margin"> ± {marginKg} kg</span> : null}</div>
+    {bcsScore != null && <div className="bcs-row"><span className="bcs-badge">BCS {bcsScore.toFixed(1)}</span><span className="muted bcs-label">{bcsLabel}</span></div>}
     <div className="muted result-subline">{r.weight_kg != null ? `Confidence: ${r.confidence || "—"}` : (r.rejection_reasons.join(", ") || "Waiting for a suitable side view.")}</div>
     <div className="result-grid">
       <div className="kv"><span>Detector</span><b>{r.detector_confidence == null ? "—" : `${r.detector_confidence}%`}</b></div>
@@ -233,6 +239,7 @@ function VideoResultCard({s}:{s:GoatVideoResult}) {
   return <div className="result-card">
     <div className="result-top"><div className="goat-name"><span className="goat-number">{displayId(s.goat_id)}</span><h3>Goat {displayId(s.goat_id)}</h3></div><span className={`status ${cls}`}>{s.view_category} · {Number(s.best_view_score).toFixed(0)}/100</span></div>
     <div className="result-big">{Number(s.final_weight_kg).toFixed(1)} kg</div>
+    {s.final_bcs_score != null && <div className="bcs-row"><span className="bcs-badge">BCS {s.final_bcs_score.toFixed(1)}</span><span className="muted bcs-label">{s.bcs_label}</span></div>}
     <div className="muted result-subline">Confidence: {s.confidence} · {s.valid_frames_count} valid frames</div>
     <img src={mediaUrl(s.best_frame_url)} alt={`Best frame ${s.goat_id}`} style={{width:"100%",borderRadius:11,marginTop:10,display:"block"}}/>
     <div className="result-grid"><div className="kv"><span>Side view</span><b>{side}</b></div><div className="kv"><span>Side confidence</span><b>{s.side_confidence != null ? `${s.side_confidence}%` : Number(s.best_view_score).toFixed(0)+"%"}</b></div><div className="kv"><span>View score</span><b>{Number(s.best_view_score).toFixed(0)}/100</b></div><div className="kv"><span>Valid frames</span><b>{s.valid_frames_count}</b></div></div>
