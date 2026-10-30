@@ -1,102 +1,11 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect } from "react";
+import { RotateCcw } from "lucide-react";
+import { useAnalysis, AnemiaResult, AnemiaModelStatus } from "@/lib/AnalysisContext";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
-
-type DetectorType = "roboflow" | "local" | "compare";
-
-type ModelStatus = {
-  available?: boolean;
-  model?: string;
-  task?: string;
-  detectors?: {
-    roboflow?: { available?: boolean; model_id?: string; provider?: string };
-    local?: { available?: boolean; model_id?: string; provider?: string };
-  };
-  conjunctiva?: {
-    configured?: boolean;
-    roboflow_configured?: boolean;
-    local_available?: boolean;
-    model_id?: string;
-  };
-  famacha?: {
-    configured?: boolean;
-    model_id?: string | null;
-    provider?: string;
-  };
-  message?: string;
-};
-
-type Prediction = {
-  id?: number;
-  class_id?: number | null;
-  class_name?: string | null;
-  confidence?: number | null;
-  famacha_score?: number | null;
-};
-
-type ConjunctivaResult = {
-  success?: boolean;
-  detected?: boolean;
-  model_id?: string;
-  provider?: string;
-  model_type?: string;
-  prediction_count?: number;
-  best_confidence?: number | null;
-  latency_ms?: number | null;
-  annotated_image?: string | null;
-  error?: string | null;
-  reason?: string | null;
-};
-
-type ComparisonEngineResult = {
-  configured?: boolean;
-  success?: boolean;
-  detected?: boolean;
-  model_id?: string;
-  provider?: string;
-  model_type?: string;
-  prediction_count?: number;
-  best_confidence?: number | null;
-  latency_ms?: number | null;
-  annotated_image?: string | null;
-  error?: string | null;
-  reason?: string | null;
-};
-
-type ComparisonData = {
-  roboflow?: ComparisonEngineResult;
-  local?: ComparisonEngineResult;
-  agreement?: boolean;
-};
-
-type FamachaResult = {
-  attempted?: boolean;
-  success?: boolean;
-  model_id?: string | null;
-  provider?: string;
-  score?: number | null;
-  class_name?: string | null;
-  confidence?: number | null;
-  risk_level?: string | null;
-  error?: string | null;
-};
-
-type AnemiaResult = {
-  status?: string;
-  detector_used?: string;
-  conjunctiva?: ConjunctivaResult;
-  famacha?: FamachaResult;
-  comparison?: ComparisonData;
-  model?: ModelStatus;
-  predictions?: Prediction[];
-  famacha_score?: number | null;
-  risk_level?: string;
-  annotated_image?: string;
-  message?: string;
-};
 
 function scoreLabel(score: number | null | undefined) {
   if (!score) return "Unavailable";
@@ -145,28 +54,37 @@ function getClinicalAdvice(score: number | null | undefined) {
 }
 
 export default function AnemiaPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState("");
-  const [result, setResult] = useState<AnemiaResult | null>(null);
-  const [model, setModel] = useState<ModelStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState("");
+  const { anemia, setAnemia, resetAnemia } = useAnalysis();
+  const { file, preview, result, model, busy, error } = anemia;
+
+  // We use a simple helper to avoid extra state variable for dragging — keep local
+  // since dragging is a transient UI state, not worth persisting
+  const setDragging = (v: boolean) => {
+    const el = document.getElementById("anemia-dropzone");
+    if (el) {
+      if (v) el.classList.add("is-dragging");
+      else el.classList.remove("is-dragging");
+    }
+  };
 
   useEffect(() => {
+    // Only fetch model status if we haven't already
+    if (model) return;
     fetch(`${API_BASE}/api/anemia/status`)
       .then(async (r) => {
         if (!r.ok) throw new Error("Unable to read anemia model status.");
         return r.json();
       })
-      .then(setModel)
+      .then((data: AnemiaModelStatus) => setAnemia({ model: data }))
       .catch(() =>
-        setModel({
-          available: false,
-          message: "Backend anemia service is not reachable.",
+        setAnemia({
+          model: {
+            available: false,
+            message: "Backend anemia service is not reachable.",
+          },
         })
       );
-  }, []);
+  }, [model, setAnemia]);
 
   function chooseFile(next: File | null) {
     if (!next) return;
@@ -175,14 +93,21 @@ export default function AnemiaPage() {
     const allowedExts = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
     const allowedTypes = ["image/jpeg", "image/png", "image/bmp", "image/webp"];
     if (!allowedTypes.includes(next.type) && !allowedExts.includes(ext)) {
-      setError("Please upload a JPG, PNG, BMP, or WEBP image.");
+      setAnemia({ error: "Please upload a JPG, PNG, BMP, or WEBP image." });
       return;
     }
 
-    setFile(next);
-    setResult(null);
-    setError("");
-    setPreview(URL.createObjectURL(next));
+    // Revoke old preview URL
+    if (preview) {
+      try { URL.revokeObjectURL(preview); } catch {}
+    }
+
+    setAnemia({
+      file: next,
+      result: null,
+      error: "",
+      preview: URL.createObjectURL(next),
+    });
   }
 
   function onInput(e: ChangeEvent<HTMLInputElement>) {
@@ -197,13 +122,11 @@ export default function AnemiaPage() {
 
   async function analyze() {
     if (!file) {
-      setError("Upload a goat eye image first.");
+      setAnemia({ error: "Upload a goat eye image first." });
       return;
     }
 
-    setBusy(true);
-    setError("");
-    setResult(null);
+    setAnemia({ busy: true, error: "", result: null });
 
     try {
       const body = new FormData();
@@ -221,11 +144,9 @@ export default function AnemiaPage() {
         throw new Error(data?.detail || data?.message || "Anemia analysis failed.");
       }
 
-      setResult(data);
+      setAnemia({ result: data as AnemiaResult, busy: false });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Anemia analysis failed.");
-    } finally {
-      setBusy(false);
+      setAnemia({ error: err instanceof Error ? err.message : "Anemia analysis failed.", busy: false });
     }
   }
 
@@ -253,6 +174,16 @@ export default function AnemiaPage() {
             (Score 1 to 5), anemia clinical risk, and eyelid conjunctiva detection.
           </p>
         </div>
+        {(file || result) && (
+          <button
+            className="btn btn-ghost"
+            style={{ padding: "7px 14px", fontSize: 12 }}
+            onClick={resetAnemia}
+            title="Clear and start fresh"
+          >
+            <RotateCcw size={13} /> Clear
+          </button>
+        )}
       </div>
 
       {/* Top Status Cards */}
@@ -307,7 +238,8 @@ export default function AnemiaPage() {
           </div>
 
           <div
-            className={`dropzone ${dragging ? "is-dragging" : ""}`}
+            id="anemia-dropzone"
+            className="dropzone"
             onDragOver={(e) => {
               e.preventDefault();
               setDragging(true);

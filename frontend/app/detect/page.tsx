@@ -1,64 +1,30 @@
 "use client";
 
-import { useState } from "react";
-import { AlertCircle, CircleCheck, Loader2, ScanSearch, Sparkles } from "lucide-react";
+import { useCallback } from "react";
+import { AlertCircle, CircleCheck, Loader2, ScanSearch, Sparkles, RotateCcw } from "lucide-react";
 import { postForm } from "@/lib/api";
 import { UploadDropzone } from "@/components/UploadDropzone";
-
-type Prediction = {
-  id?: number;
-  class: string;
-  confidence: number | null;
-  box: { x1: number; y1: number; x2: number; y2: number } | null;
-  center?: { x: number; y: number } | null;
-  side_view_score?: number;
-  visibility_pct?: number;
-  is_valid_side?: boolean;
-  side_category?: string;
-  rejection_reasons?: string[];
-  weight_kg?: number | null;
-  weight_margin_kg?: number | null;
-  bcs_score?: number | null;
-  bcs_label?: string | null;
-};
-
-type Response = {
-  source_image: string;
-  annotated_image: string | null;
-  goats_detected: number;
-  valid_side_views?: number;
-  invalid_views?: number;
-  predictions: Prediction[];
-  workspace: string;
-  workflow: string;
-  image_width: number;
-  image_height: number;
-  annotation_source?: string;
-};
+import { useAnalysis, DetectResponse } from "@/lib/AnalysisContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function GoatDetectionPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<Response | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [viewMode, setViewMode] = useState<"annotated" | "original">("annotated");
+  const { detect, setDetect, resetDetect } = useAnalysis();
+  const { file, result, busy, error, viewMode } = detect;
+
+  const setFile = useCallback((f: File | null) => setDetect({ file: f, result: null, error: "" }), [setDetect]);
 
   async function scan() {
     if (!file) return;
-    setBusy(true);
-    setError("");
-    setResult(null);
+    setDetect({ busy: true, error: "", result: null });
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("detector", "roboflow");
-      setResult(await postForm<Response>("/api/detect/goats", form));
+      const res = await postForm<DetectResponse>("/api/detect/goats", form);
+      setDetect({ result: res, busy: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Goat detection failed.");
-    } finally {
-      setBusy(false);
+      setDetect({ error: e instanceof Error ? e.message : "Goat detection failed.", busy: false });
     }
   }
 
@@ -71,8 +37,20 @@ export default function GoatDetectionPage() {
           Detects every goat in the frame, validates side-profile angle feasibility, and calculates live weight (kg) and Body Condition Score (BCS).
         </p>
       </div>
-      <div className="status good">
-        <CircleCheck size={14}/> Active
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {(file || result) && (
+          <button
+            className="btn btn-ghost"
+            style={{ padding: "7px 14px", fontSize: 12 }}
+            onClick={resetDetect}
+            title="Clear and start fresh"
+          >
+            <RotateCcw size={13} /> Clear
+          </button>
+        )}
+        <div className="status good">
+          <CircleCheck size={14}/> Active
+        </div>
       </div>
     </div>
 
@@ -209,7 +187,7 @@ export default function GoatDetectionPage() {
                 type="button"
                 className={`btn ${viewMode === "annotated" ? "btn-primary" : "btn-secondary"}`}
                 style={{ padding: "6px 14px", fontSize: 12 }}
-                onClick={() => setViewMode("annotated")}
+                onClick={() => setDetect({ viewMode: "annotated" })}
               >
                 Annotated Side View
               </button>
@@ -217,7 +195,7 @@ export default function GoatDetectionPage() {
                 type="button"
                 className={`btn ${viewMode === "original" ? "btn-primary" : "btn-secondary"}`}
                 style={{ padding: "6px 14px", fontSize: 12 }}
-                onClick={() => setViewMode("original")}
+                onClick={() => setDetect({ viewMode: "original" })}
               >
                 Original Photo
               </button>
@@ -397,4 +375,3 @@ export default function GoatDetectionPage() {
     )}
   </>;
 }
-
