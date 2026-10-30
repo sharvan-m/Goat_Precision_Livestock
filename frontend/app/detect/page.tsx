@@ -281,141 +281,116 @@ export default function GoatDetectionPage() {
             No goats were detected in this image.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14, marginTop: 12 }}>
-            {result.predictions.map((p, i) => (
-              <div
-                className="result-card"
-                key={i}
-                style={{
-                  margin: 0,
-                  borderLeft: `4px solid ${p.is_valid_side ? "#10b981" : "#ef4444"}`,
-                }}
-              >
-                <div className="result-top">
-                  <h3>Goat {i + 1}</h3>
-                  <span
-                    className="status"
-                    style={{
-                      background: p.is_valid_side ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
-                      color: p.is_valid_side ? "#10b981" : "#ef4444",
-                      fontWeight: 700,
-                      padding: "4px 8px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                    }}
-                  >
-                    {p.is_valid_side ? "VALID SIDE VIEW" : "INVALID ANGLE"}
-                  </span>
-                </div>
+          <div className="goat-result-grid" style={{ marginTop: 12 }}>
+            {result.predictions.map((p, i) => {
+              /* Compute an overall quality score 0-100 */
+              const sideScore = p.side_view_score ?? 0;
+              const confScore = p.confidence != null ? p.confidence * 100 : 0;
+              const visScore = p.visibility_pct ?? 100;
+              const qualityScore = Math.round(sideScore * 0.45 + confScore * 0.30 + visScore * 0.25);
+              const qualityLabel = qualityScore >= 70 ? "ACCEPTABLE" : qualityScore >= 45 ? "ACCEPTABLE" : "POOR";
+              const qualityColor = qualityScore >= 70 ? "#27683d" : qualityScore >= 45 ? "#8c611b" : "#a33a3a";
+              const qualityBg = qualityScore >= 70 ? "#e7f5ea" : qualityScore >= 45 ? "#fff0d2" : "#ffe1e1";
+              const confLabel = confScore >= 85 ? "HIGH" : confScore >= 60 ? "MEDIUM" : "LOW";
 
+              return (
                 <div
-                  className="result-big"
-                  style={{
-                    color: p.is_valid_side ? "#10b981" : "#ef4444",
-                    fontSize: 26,
-                    margin: "8px 0 4px",
-                  }}
+                  className="result-card"
+                  key={i}
+                  style={{ margin: 0, display: "flex", flexDirection: "column" }}
                 >
-                  {p.side_view_score != null ? `${p.side_view_score}%` : "—"}
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-muted, #888)", marginLeft: 6 }}>
-                    side quality
-                  </span>
-                </div>
-
-                {/* Side Quality Progress Bar */}
-                <div style={{ height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 3, marginBottom: 10, overflow: "hidden" }}>
-                  <div
-                    style={{
-                      width: `${Math.min(100, Math.max(0, p.side_view_score || 0))}%`,
-                      height: "100%",
-                      background: p.is_valid_side ? "#10b981" : "#ef4444",
-                      borderRadius: 3,
-                    }}
-                  />
-                </div>
-
-                {/* Live Weight & BCS Display */}
-                {p.weight_kg != null ? (
-                  <div style={{ margin: "10px 0 12px", padding: "10px 12px", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--fg-muted, #888)", fontWeight: 700 }}>Estimated Live Weight</span>
-                      {p.weight_margin_kg != null && <span style={{ fontSize: 11, color: "var(--fg-muted, #888)" }}>± {p.weight_margin_kg} kg (95% CI)</span>}
+                  {/* ── Header: Number + Name + Quality Badge ── */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+                    <div className="goat-name">
+                      <span className="goat-number">{String(i + 1).padStart(2, "0")}</span>
+                      <h3>Goat {String(i + 1).padStart(2, "0")}</h3>
                     </div>
-                    <div style={{ fontSize: 24, fontWeight: 850, color: "#10b981", margin: "2px 0 6px" }}>
-                      {p.weight_kg.toFixed(1)} <span style={{ fontSize: 15, fontWeight: 600 }}>kg</span>
-                    </div>
-                    {p.bcs_score != null && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 6, borderTop: "1px solid rgba(16, 185, 129, 0.15)" }}>
-                        <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "#10b981", color: "#062817" }}>
-                          BCS {p.bcs_score.toFixed(1)}
-                        </span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--fg, #e2e8f0)" }}>
-                          {p.bcs_label}
-                        </span>
+                    <span
+                      className="status"
+                      style={{
+                        background: qualityBg,
+                        color: qualityColor,
+                        fontWeight: 800,
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        fontSize: 10,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {qualityLabel} · {qualityScore}/100
+                    </span>
+                  </div>
+
+                  {/* ── Weight or Unavailable ── */}
+                  {p.weight_kg != null ? (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 28, fontWeight: 850, color: "var(--ink)", letterSpacing: "-0.03em", lineHeight: 1.1 }}>
+                        {p.weight_kg.toFixed(1)} <span style={{ fontSize: 16, fontWeight: 700 }}>kg</span>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ margin: "10px 0 12px", padding: "10px 12px", background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: 8, fontSize: 12 }}>
-                    <div style={{ fontWeight: 700, color: "#ef4444", marginBottom: 3 }}>
-                      Weight Estimation Gated
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                        Confidence: {confLabel}
+                      </div>
                     </div>
-                    <div style={{ color: "var(--fg-muted, #94a3b8)", fontSize: 11 }}>
-                      {p.rejection_reasons && p.rejection_reasons.length > 0 ? p.rejection_reasons.join(", ") : "Angle or distance unsuitable for biometric weighing."}
-                    </div>
-                  </div>
-                )}
-
-                <div className="result-grid">
-                  <div className="kv">
-                    <span>Live Weight</span>
-                    <b style={{ color: p.weight_kg != null ? "#10b981" : "#ef4444" }}>
-                      {p.weight_kg != null ? `${p.weight_kg.toFixed(1)} kg` : "Gated (Angle)"}
-                    </b>
-                  </div>
-                  <div className="kv">
-                    <span>Body Condition</span>
-                    <b style={{ color: p.bcs_score != null ? "#10b981" : "inherit" }}>
-                      {p.bcs_score != null ? `BCS ${p.bcs_score.toFixed(1)}` : "—"}
-                    </b>
-                  </div>
-                  <div className="kv">
-                    <span>Weight Feasibility</span>
-                    <b style={{ color: p.is_valid_side ? "#10b981" : "#ef4444" }}>
-                      {p.is_valid_side ? "Ready for Weight" : "Not Usable"}
-                    </b>
-                  </div>
-                  <div className="kv">
-                    <span>Body Visibility</span>
-                    <b style={{ color: (p.visibility_pct ?? 100) >= 70 ? "#10b981" : "#ef4444" }}>
-                      {p.visibility_pct != null ? `${p.visibility_pct}%` : "100%"}
-                    </b>
-                  </div>
-                  <div className="kv">
-                    <span>Detection Conf</span>
-                    <b>{p.confidence != null ? `${(p.confidence * 100).toFixed(1)}%` : "—"}</b>
-                  </div>
-                  <div className="kv">
-                    <span>Angle Category</span>
-                    <b>{p.side_category || "Standard"}</b>
-                  </div>
-                  {p.box && (
-                    <div className="kv" style={{ gridColumn: "1 / -1", fontSize: 11, color: "var(--fg-muted, #888)" }}>
-                      <span>Coordinates</span>
-                      <b>[{Math.round(p.box.x1)}, {Math.round(p.box.y1)}, {Math.round(p.box.x2)}, {Math.round(p.box.y2)}]</b>
+                  ) : (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 22, fontWeight: 850, color: "var(--ink)", letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+                        Weight unavailable
+                      </div>
+                      <div className="result-subline" style={{ color: "var(--muted)", marginTop: 4 }}>
+                        {p.rejection_reasons && p.rejection_reasons.length > 0 ? p.rejection_reasons.join(". ") : "Angle or distance unsuitable for biometric weighing."}
+                      </div>
                     </div>
                   )}
-                </div>
 
-                {/* Rejection / Angle Notes */}
-                {p.rejection_reasons && p.rejection_reasons.length > 0 && (
-                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: 11, color: "var(--fg-muted, #999)" }}>
-                    <span style={{ fontWeight: 600, color: "#ef4444" }}>Notes: </span>
-                    {p.rejection_reasons.join(", ")}
+                  {/* ── BCS Badge (if available) ── */}
+                  {p.bcs_score != null && (
+                    <div className="bcs-row" style={{ marginBottom: 10 }}>
+                      <span className="bcs-badge">BCS {p.bcs_score.toFixed(1)}</span>
+                      <span className="bcs-label" style={{ color: "var(--muted)" }}>{p.bcs_label}</span>
+                    </div>
+                  )}
+
+                  {/* ── 2×2 Stats Grid ── */}
+                  <div className="result-grid" style={{ flex: 1 }}>
+                    <div className="kv">
+                      <span>Detection</span>
+                      <b>{p.confidence != null ? `${(p.confidence * 100).toFixed(1)}%` : "—"}</b>
+                    </div>
+                    <div className="kv">
+                      <span>Side View</span>
+                      <b style={{ color: p.is_valid_side ? "#27683d" : "#a33a3a" }}>
+                        {p.is_valid_side ? "SIDE" : "NOT SIDE"}
+                      </b>
+                    </div>
+                    <div className="kv">
+                      <span>Side Confidence</span>
+                      <b>{sideScore > 0 ? `${sideScore}%` : "—"}</b>
+                    </div>
+                    <div className="kv">
+                      <span>Estimation</span>
+                      <b style={{ color: p.is_valid_side ? "#27683d" : "#a33a3a" }}>
+                        {p.is_valid_side ? "Allowed" : "Blocked"}
+                      </b>
+                    </div>
                   </div>
-                )}
-              </div>
-            ))}
+
+                  {/* ── Morphometric Features (collapsible) ── */}
+                  <details className="measure-details" style={{ marginTop: 8 }}>
+                    <summary>▸ Morphometric Features</summary>
+                    <div className="code-block" style={{ marginTop: 8, fontSize: 10, lineHeight: 1.65 }}>
+                      <div>Angle Category: {p.side_category || "Standard"}</div>
+                      <div>Weight Feasibility: {p.is_valid_side ? "Ready for Weight" : "Not Usable"}</div>
+                      <div>Body Visibility: {p.visibility_pct != null ? `${p.visibility_pct}%` : "100%"}</div>
+                      {p.weight_kg != null && <div>Live Weight: {p.weight_kg.toFixed(1)} kg</div>}
+                      {p.bcs_score != null && <div>BCS: {p.bcs_score.toFixed(1)} ({p.bcs_label})</div>}
+                      {p.weight_margin_kg != null && <div>Weight Margin: ±{p.weight_margin_kg} kg (95% CI)</div>}
+                      {p.box && <div>Coordinates: [{Math.round(p.box.x1)}, {Math.round(p.box.y1)}, {Math.round(p.box.x2)}, {Math.round(p.box.y2)}]</div>}
+                      {p.rejection_reasons && p.rejection_reasons.length > 0 && <div style={{ color: "#ef4444" }}>Notes: {p.rejection_reasons.join(", ")}</div>}
+                    </div>
+                  </details>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
