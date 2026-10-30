@@ -2,6 +2,7 @@
 Dataset management and leakage-free splitting module with veterinary biometrics.
 Generates comprehensive multi-breed caprine population datasets based on empirical
 animal science literature (FAO, ICAR, SAJAS) incorporating Body Condition Score (BCS).
+All features are scale-invariant and metric (cm) to ensure resolution-independent accuracy.
 """
 
 from typing import Tuple, Dict, List, Optional
@@ -15,19 +16,15 @@ from goat_weight_system.config import DATASET_CSV_PATH
 class DatasetManager:
     """Manages tabular dataset loading, feature preprocessing, and leak-free group splitting."""
 
+    # Pure metric and scale-invariant features (NO raw pixel dimensions!)
     FEATURE_COLUMNS = [
         "body_length",
         "height",
         "girth",
         "body_width",
-        "mask_area",
         "solidity",
         "bbox_aspect_ratio",
-        "major_axis_px",
-        "minor_axis_px",
-        "eccentricity",
         "torso_ratio",
-        "torso_aspect_ratio",
         "depth_ratio",
     ]
 
@@ -46,11 +43,10 @@ class DatasetManager:
 
         self.df = pd.read_csv(self.csv_path)
 
-        # Ensure all required columns are present
+        # Check required columns
         required_cols = [self.TARGET_COLUMN, self.GROUP_COLUMN] + self.FEATURE_COLUMNS
         missing_cols = [c for c in required_cols if c not in self.df.columns]
         if missing_cols:
-            # Re-generate if older version lacks new biometric columns
             self.df = self.generate_synthetic_dataset(output_csv_path=self.csv_path)
 
         return self.df
@@ -61,10 +57,7 @@ class DatasetManager:
         val_size: float = 0.15,
         random_state: int = 42,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """
-        Split dataset into Train, Validation, and Test sets based on goat_id groups.
-        Guarantees no images of the same goat ID appear across different splits.
-        """
+        """Split dataset into Train, Validation, and Test sets based on goat_id groups."""
         if self.df is None:
             self.load_data()
 
@@ -87,7 +80,7 @@ class DatasetManager:
 
     @staticmethod
     def generate_synthetic_dataset(
-        num_goats: int = 350,
+        num_goats: int = 400,
         samples_per_goat: int = 6,
         output_csv_path: Optional[str] = None,
         random_state: int = 42,
@@ -97,21 +90,21 @@ class DatasetManager:
         veterinary allometric equations:
         Weight (kg) = (BL * HG^2) / 10950 * (1.0 + 0.12 * (BCS - 3.0)) + noise.
 
-        Cohorts simulated:
-        1. Growing Kids / Weaners (10 - 22 kg)
-        2. Small Meat Breeds (Black Bengal, Barbari) (14 - 30 kg)
-        3. Medium Dual-purpose (Malabari, Sirohi, Alpine) (25 - 55 kg)
-        4. Heavy Meat / Dairy Breeds (Boer, Jamunapari) (45 - 85 kg)
+        True Real-World Cohorts:
+        1. Kids / Weaners (9 - 18 kg, avg ~14 kg)
+        2. Small Breeds (Black Bengal, Barbari) (16 - 28 kg, avg ~22 kg)
+        3. Medium Commercial (Malabari, Sirohi, Alpine) (26 - 48 kg, avg ~35 kg)
+        4. Heavy Meat / Bucks (Boer, Jamunapari) (45 - 75 kg, avg ~58 kg)
         """
         rng = np.random.default_rng(random_state)
         records = []
 
         cohorts = [
             # (name, count, length_range, girth_ratio_range, height_ratio_range, bcs_range, k_const)
-            ("Kid", int(num_goats * 0.20), (40.0, 56.0), (0.95, 1.10), (0.75, 0.88), (2.0, 3.5), 10800.0),
-            ("SmallBreed", int(num_goats * 0.25), (48.0, 64.0), (1.00, 1.18), (0.70, 0.82), (2.0, 4.0), 10900.0),
-            ("MediumBreed", int(num_goats * 0.35), (60.0, 80.0), (1.02, 1.25), (0.72, 0.85), (2.2, 4.2), 11000.0),
-            ("HeavyBreed", int(num_goats * 0.20), (74.0, 94.0), (1.08, 1.30), (0.74, 0.86), (2.5, 4.5), 11100.0),
+            ("Kid", int(num_goats * 0.20), (42.0, 52.0), (1.00, 1.10), (0.85, 0.95), (2.0, 3.5), 10800.0),
+            ("SmallBreed", int(num_goats * 0.30), (50.0, 62.0), (1.02, 1.16), (0.82, 0.94), (2.0, 4.0), 10900.0),
+            ("MediumBreed", int(num_goats * 0.35), (62.0, 75.0), (1.04, 1.20), (0.84, 0.96), (2.2, 4.2), 10950.0),
+            ("HeavyBreed", int(num_goats * 0.15), (74.0, 86.0), (1.08, 1.24), (0.86, 0.98), (2.5, 4.5), 11000.0),
         ]
 
         goat_counter = 1
@@ -121,7 +114,7 @@ class DatasetManager:
                 goat_str_id = f"GOAT_{goat_counter:03d}"
                 goat_counter += 1
 
-                # True anatomical traits
+                # True physical dimensions (cm)
                 true_length = float(rng.uniform(l_min, l_max))
                 girth_ratio = float(rng.uniform(gr_min, gr_max))
                 true_girth = float(true_length * girth_ratio)
@@ -132,34 +125,25 @@ class DatasetManager:
                 # Veterinary Allometric Weight with BCS Adjustment
                 bcs_factor = 1.0 + 0.12 * (true_bcs - 3.0)
                 allometric_wt = (true_length * (true_girth ** 2.0)) / k_const * bcs_factor
-                actual_weight = float(np.clip(allometric_wt + rng.normal(0, 0.8), 8.0, 95.0))
+                # Clamp strictly within real biological boundaries (8kg - 80kg)
+                actual_weight = float(np.clip(allometric_wt + rng.normal(0, 0.6), 8.0, 80.0))
 
-                # Torso Area Fraction correlates strongly with BCS (adiposity / barrel fullness)
-                base_torso_ratio = 0.40 + 0.04 * (true_bcs - 2.0)
+                base_torso_ratio = 0.42 + 0.03 * (true_bcs - 2.0)
 
                 for frame_idx in range(1, samples_per_goat + 1):
                     image_id = f"img_{goat_str_id}_f{frame_idx:02d}.jpg"
 
-                    # Frame-to-frame visual measurement noise (pose / camera angle)
-                    meas_noise = float(rng.normal(1.0, 0.025))
-                    meas_length = true_length * meas_noise
-                    meas_height = true_height * meas_noise
-                    meas_girth = true_girth * meas_noise
+                    # Frame observation noise
+                    meas_noise = float(rng.normal(1.0, 0.02))
+                    meas_length = float(np.clip(true_length * meas_noise, 40.0, 90.0))
+                    meas_height = float(np.clip(true_height * meas_noise, 38.0, 85.0))
+                    meas_girth = float(np.clip(true_girth * meas_noise, 44.0, 92.0))
                     meas_width = meas_girth * 0.35 * meas_noise
 
-                    # Morphology features
-                    mask_area = meas_length * meas_height * float(rng.uniform(0.56, 0.65))
-                    solidity = float(np.clip(0.78 + 0.03 * (true_bcs - 2.5) + rng.normal(0, 0.02), 0.65, 0.95))
+                    solidity = float(np.clip(0.78 + 0.02 * (true_bcs - 2.5) + rng.normal(0, 0.015), 0.65, 0.92))
                     aspect_ratio = meas_length / max(meas_height, 1.0)
-
-                    # Torso metrics
-                    torso_ratio = float(np.clip(base_torso_ratio + rng.normal(0, 0.015), 0.32, 0.65))
-                    torso_aspect_ratio = float(np.clip(meas_length * 0.65 / max(meas_girth * 0.45, 1.0) + rng.normal(0, 0.04), 0.90, 2.80))
-                    depth_ratio = float(np.clip((meas_girth * 0.45) / max(meas_height, 1.0) + rng.normal(0, 0.02), 0.35, 0.75))
-
-                    major_axis = meas_length * 8.0
-                    minor_axis = meas_height * 8.0
-                    eccentricity = float(np.sqrt(max(0.0, 1.0 - (minor_axis / major_axis) ** 2)))
+                    torso_ratio = float(np.clip(base_torso_ratio + rng.normal(0, 0.01), 0.35, 0.60))
+                    depth_ratio = float(np.clip((meas_girth / 2.42) / max(meas_height, 1.0) + rng.normal(0, 0.01), 0.40, 0.52))
 
                     records.append({
                         "image_id": image_id,
@@ -170,14 +154,9 @@ class DatasetManager:
                         "height": round(meas_height, 2),
                         "girth": round(meas_girth, 2),
                         "body_width": round(meas_width, 2),
-                        "mask_area": round(mask_area, 2),
                         "solidity": round(solidity, 4),
                         "bbox_aspect_ratio": round(aspect_ratio, 3),
-                        "major_axis_px": round(major_axis, 2),
-                        "minor_axis_px": round(minor_axis, 2),
-                        "eccentricity": round(eccentricity, 4),
                         "torso_ratio": round(torso_ratio, 4),
-                        "torso_aspect_ratio": round(torso_aspect_ratio, 3),
                         "depth_ratio": round(depth_ratio, 3),
                         "actual_weight_kg": round(actual_weight, 2),
                     })

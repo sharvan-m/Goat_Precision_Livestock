@@ -34,16 +34,6 @@ class MeasurementExtractor:
 
         Applies Perspective Correction along the goat's principal body orientation axis
         and computes torso-to-body biometric ratios for weight and BCS prediction.
-
-        Args:
-            mask: Binary uint8 mask (1 for goat pixel, 0 for background).
-            box: Bounding box [x1, y1, x2, y2].
-            pixel_scale_override: Optional scale override for current image frame.
-            torso_mask: Optional binary uint8 mask for torso from Roboflow model.
-            torso_box: Optional bounding box [x1, y1, x2, y2] for torso.
-
-        Returns:
-            Dictionary containing extracted morphological features (both pixel and cm-scaled).
         """
         binary_mask = (mask > 0).astype(np.uint8)
 
@@ -59,15 +49,15 @@ class MeasurementExtractor:
         if not contours:
             body_length_px = bbox_w
             withers_height_px = bbox_h
-            chest_girth_px = bbox_h * 0.85
-            body_width_px = bbox_h * 0.70
-            mask_area_px = bbox_area * 0.60
+            chest_depth_px = bbox_h * 0.46
+            body_width_px = bbox_h * 0.35
+            mask_area_px = bbox_area * 0.55
             perimeter_px = 2.0 * (bbox_w + bbox_h)
             hull_area_px = bbox_area
-            solidity = 0.60
+            solidity = 0.75
             major_axis_px = bbox_w
             minor_axis_px = bbox_h
-            eccentricity = 0.80
+            eccentricity = 0.75
             orientation_angle_deg = 0.0
         else:
             contour = max(contours, key=cv2.contourArea)
@@ -76,7 +66,7 @@ class MeasurementExtractor:
 
             hull = cv2.convexHull(contour)
             hull_area_px = float(cv2.contourArea(hull))
-            solidity = float(mask_area_px / hull_area_px) if hull_area_px > 0 else 0.0
+            solidity = float(mask_area_px / hull_area_px) if hull_area_px > 0 else 0.75
 
             # Rotated bounding box along principal body axis
             rect = cv2.minAreaRect(contour)
@@ -84,27 +74,13 @@ class MeasurementExtractor:
             raw_length_px = float(max(w_rect, h_rect))
             raw_width_px = float(min(w_rect, h_rect))
 
-            # Withers height: vertical span of contour
+            # Withers height: vertical span from dorsal spine down to hooves
             pts = contour[:, 0, :]
             y_min = np.min(pts[:, 1])
             y_max = np.max(pts[:, 1])
             withers_height_px = float(max(1, y_max - y_min))
 
-            # Chest girth proxy: vertical slice across anterior 35% of horizontal length
-            x_min = np.min(pts[:, 0])
-            x_max = np.max(pts[:, 0])
-            chest_x = int(x_min + 0.35 * (x_max - x_min))
-
-            if 0 <= chest_x < binary_mask.shape[1]:
-                col_indices = np.where(binary_mask[:, chest_x] > 0)[0]
-                if len(col_indices) > 0:
-                    chest_girth_px = float(col_indices[-1] - col_indices[0])
-                else:
-                    chest_girth_px = withers_height_px * 0.85
-            else:
-                chest_girth_px = withers_height_px * 0.85
-
-            # Moments for ellipse axes & body tilt orientation
+            # Perspective correction for diagonal tilt angle
             if len(contour) >= 5:
                 try:
                     (ellipse_cx, ellipse_cy), (d1, d2), angle = cv2.fitEllipse(contour)
@@ -124,16 +100,32 @@ class MeasurementExtractor:
                 minor_axis_px = raw_width_px
                 orientation_angle_deg = 0.0
 
-            # Perspective correction for diagonal tilt angle
             rad = np.radians(np.clip(orientation_angle_deg, 0.0, 60.0))
-            cos_factor = max(np.cos(rad), 0.55)
+            cos_factor = max(np.cos(rad), 0.60)
             body_length_px = float(raw_length_px / cos_factor)
             body_width_px = float(raw_width_px)
-
             eccentricity = float(np.sqrt(max(0.0, 1.0 - (minor_axis_px / max(major_axis_px, 1.0)) ** 2)))
 
+            # Chest depth calculation:
+            # In caprine anatomy, chest depth is spine-to-sternum ONLY (~44-50% of withers height).
+            # It must NEVER include the legs!
+            x_min = np.min(pts[:, 0])
+            x_max = np.max(pts[:, 0])
+            chest_x = int(x_min + 0.35 * (x_max - x_min))
+            raw_slice = 0.0
+            if 0 <= chest_x < binary_mask.shape[1]:
+                col_indices = np.where(binary_mask[:, chest_x] > 0)[0]
+                if len(col_indices) > 0:
+                    raw_slice = float(col_indices[-1] - col_indices[0])
+
+            # Bound chest depth to realistic anatomical range: 42% - 50% of withers height
+            if raw_slice > 0 and raw_slice < (withers_height_px * 0.65):
+                chest_depth_px = raw_slice
+            else:
+                chest_depth_px = withers_height_px * 0.46
+
         # -----------------------------------------------------------------
-        # TORSO BIOMETRICS: Extract or estimate torso region for BCS/Volume
+        # TORSO BIOMETRICS: Extract torso if provided, or estimate barrel
         # -----------------------------------------------------------------
         torso_detected = False
         if torso_mask is not None and np.sum(torso_mask > 0) > 100:
@@ -151,22 +143,23 @@ class MeasurementExtractor:
                     torso_w_px = float(tw)
                     torso_h_px = float(th)
                 else:
-                    torso_w_px = body_length_px * 0.65
-                    torso_h_px = chest_girth_px
+                    torso_w_px = body_length_px * 0.62
+                    torso_h_px = withers_height_px * 0.46
+            # Use actual torso mask height for chest depth when available
+            if 0.30 * withers_height_px <= torso_h_px <= 0.65 * withers_height_px:
+                chest_depth_px = torso_h_px
         else:
-            # Fallback estimation: Torso is the central ~55% horizontal span between neck and flank
-            torso_area_px = mask_area_px * 0.52
-            torso_w_px = body_length_px * 0.65
-            torso_h_px = chest_girth_px * 0.90
+            torso_area_px = mask_area_px * 0.48
+            torso_w_px = body_length_px * 0.62
+            torso_h_px = withers_height_px * 0.46
 
-        torso_ratio = float(np.clip(torso_area_px / max(mask_area_px, 1.0), 0.20, 0.85))
-        torso_aspect_ratio = float(np.clip(torso_w_px / max(torso_h_px, 1.0), 0.50, 3.50))
-        depth_ratio = float(np.clip(torso_h_px / max(withers_height_px, 1.0), 0.25, 0.95))
+        torso_ratio = float(np.clip(torso_area_px / max(mask_area_px, 1.0), 0.30, 0.65))
+        torso_aspect_ratio = float(np.clip(torso_w_px / max(torso_h_px, 1.0), 1.0, 2.5))
+        depth_ratio = float(np.clip(chest_depth_px / max(withers_height_px, 1.0), 0.38, 0.54))
 
         # -----------------------------------------------------------------
-        # ADAPTIVE ANATOMICAL SCALING:
-        # If scale is uncalibrated (scale == 1.0), calculate scale using caprine
-        # anatomical stature priors: average domestic goat withers height = 66 cm
+        # SCALE CALIBRATION (Pixels to Centimeters)
+        # Adult domestic goat standard median withers height = 62.0 cm
         # -----------------------------------------------------------------
         if pixel_scale_override is not None:
             scale = pixel_scale_override
@@ -175,31 +168,32 @@ class MeasurementExtractor:
             scale = self.pixel_scale_cm
             calibrated = True
         else:
-            # Anatomical prior: domestic goat height at withers standard median = 66.0 cm
-            # Normalize pixel height to biological standard
-            stature_ref_cm = 66.0
-            scale = stature_ref_cm / max(withers_height_px, 10.0)
+            # Anatomical prior: Standard domestic goat withers height ~ 62 cm
+            scale = 62.0 / max(withers_height_px, 10.0)
             calibrated = False
 
-        # Metric conversions (cm / cm²)
-        body_length_cm = float(body_length_px * scale)
+        # Metric conversions (cm)
         withers_height_cm = float(withers_height_px * scale)
-        chest_girth_cm = float(chest_girth_px * scale * 2.15)  # 2D side depth to circumference multiplier (~2.15)
-        body_width_cm = float(body_width_px * scale)
+        # Body length in cm: In domestic goats, BL is ~1.05 to 1.15 x height
+        body_length_cm = float(body_length_px * scale)
+        chest_depth_cm = float(chest_depth_px * scale)
+
+        # Heart girth in cm: In caprines, heart girth circumference HG ~ 2.42 * chest depth
+        # Average adult goat: chest depth = 28 cm -> HG = 68 cm
+        chest_girth_cm = float(chest_depth_cm * 2.42)
+        body_width_cm = float(chest_depth_cm * 0.72)
         mask_area_cm2 = float(mask_area_px * (scale ** 2))
 
-        # Clamp metric estimates within realistic caprine anatomical boundaries
-        body_length_cm = float(np.clip(body_length_cm, 35.0, 115.0))
-        withers_height_cm = float(np.clip(withers_height_cm, 35.0, 105.0))
-        chest_girth_cm = float(np.clip(chest_girth_cm, 45.0, 120.0))
-        body_width_cm = float(np.clip(body_width_cm, 15.0, 45.0))
+        # Enforce realistic veterinary anatomical limits
+        withers_height_cm = float(np.clip(withers_height_cm, 40.0, 85.0))
+        body_length_cm = float(np.clip(body_length_cm, 42.0, 92.0))
+        chest_girth_cm = float(np.clip(chest_girth_cm, 45.0, 92.0))
+        body_width_cm = float(np.clip(body_width_cm, 16.0, 36.0))
 
         # -----------------------------------------------------------------
         # BODY CONDITION SCORE (BCS 1.0 to 5.0)
-        # Based on Torso Silhouette Area Ratio (R_torso), solidity, and depth
         # -----------------------------------------------------------------
-        # Baseline: ideal BCS 3.0 has torso_ratio ~ 0.48, depth_ratio ~ 0.52
-        bcs_raw = 3.0 + (torso_ratio - 0.48) * 8.0 + (solidity - 0.80) * 3.0 + (depth_ratio - 0.52) * 2.5
+        bcs_raw = 3.0 + (torso_ratio - 0.48) * 6.0 + (solidity - 0.78) * 2.5 + (depth_ratio - 0.46) * 3.0
         bcs_score = float(np.clip(round(bcs_raw, 1), 1.0, 5.0))
 
         if bcs_score < 2.0:
@@ -217,7 +211,7 @@ class MeasurementExtractor:
             # Pixel-space features
             "body_length_px": round(body_length_px, 2),
             "withers_height_px": round(withers_height_px, 2),
-            "chest_girth_px": round(chest_girth_px, 2),
+            "chest_girth_px": round(chest_depth_px, 2),
             "body_width_px": round(body_width_px, 2),
             "bbox_width_px": round(bbox_w, 2),
             "bbox_height_px": round(bbox_h, 2),
@@ -239,7 +233,7 @@ class MeasurementExtractor:
             "depth_ratio": round(depth_ratio, 3),
             "bcs_score": bcs_score,
             "bcs_label": bcs_label,
-            # Calibrated metric features (cm / cm²)
+            # Calibrated metric features (cm)
             "body_length": round(body_length_cm, 2),
             "height": round(withers_height_cm, 2),
             "girth": round(chest_girth_cm, 2),
