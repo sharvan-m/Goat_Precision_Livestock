@@ -173,7 +173,7 @@ def status() -> dict[str, Any]:
 
     conj_ok = conjunctiva_is_configured()
     rf_fam_ok = fam_rf.famacha_is_configured()
-    pipeline_ok = conj_ok and rf_fam_ok
+    pipeline_ok = conj_ok  # Pipeline is operational with Colorimetric Analyzer and/or Cloud Model B
 
     return {
         "available": pipeline_ok,
@@ -367,19 +367,16 @@ def analyze(
         best, _ = evaluate_conjunctiva(conjunctiva)
 
     # ---- Model B: FAMACHA Scoring Model ----
+    # Hybrid Approach:
+    # 1. First attempts Cloud Roboflow FAMACHA model if available.
+    # 2. If Cloud Model B produces no predictions (common on unseen images due to small dataset),
+    #    automatically uses the Conjunctiva Colorimetric Model (CIELAB Ophthalmic Standard)
+    #    which measures vascular redness vs pallor from the segmented conjunctiva polygon.
     run_b = famacha_fn
-    mode = input_mode
+    mode = input_mode or (fam_rf.input_mode() if fam_rf.famacha_is_configured() else "full")
 
-    if run_b is None:
-        if fam_rf.famacha_is_configured():
-            run_b = fam_rf.run_famacha_model
-            mode = mode or fam_rf.input_mode()
-        else:
-            missing = fam_rf.missing_configuration()
-            famacha["error"] = "FAMACHA model is not configured: " + ", ".join(missing)
-            return respond(MSG_SCORING_FAILED, "ok")
-    else:
-        mode = mode or "full"
+    if run_b is None and fam_rf.famacha_is_configured():
+        run_b = fam_rf.run_famacha_model
 
     famacha["attempted"] = True
 
@@ -387,20 +384,32 @@ def analyze(
     crop_bytes = crop_conjunctiva(image_bytes, best) if best else None
 
     # Input image: if mode is crop, use crop_bytes or fall back to image_bytes
-    if mode == "crop":
-        model_input = crop_bytes if crop_bytes is not None else image_bytes
-    else:
-        model_input = image_bytes
+    model_input = crop_bytes if mode == "crop" and crop_bytes is not None else image_bytes
 
-    try:
-        # Pass model_input and original image_bytes so the model can evaluate both
-        scored = run_b(model_input, full_image_bytes=image_bytes)
-        score = int(scored["score"])
-        confidence = float(scored["confidence"])
-        class_name = str(scored["class_name"])
-    except Exception as exc:
-        famacha["error"] = str(exc)
-        return respond(MSG_SCORING_FAILED, "ok")
+    scored = None
+    if run_b is not None:
+        try:
+            res = run_b(model_input, full_image_bytes=image_bytes)
+            if res and res.get("score") is not None:
+                scored = res
+        except Exception as exc:
+            famacha["error"] = str(exc)
+            print(f"[ANEMIA] Roboflow Model B returned no match or error: {exc}. Evaluating via Colorimetry.")
+
+    # Fallback to Colorimetric Model using polygon coordinates
+    if not scored or scored.get("score") is None:
+        try:
+            from backend.services.famacha_colorimeter import analyze_conjunctiva_color
+            points = best.get("points") if isinstance(best, dict) else None
+            box = best if isinstance(best, dict) else None
+            scored = analyze_conjunctiva_color(image_bytes, points=points, box=box)
+        except Exception as exc:
+            famacha["error"] = f"Scoring evaluation failed: {exc}"
+            return respond(MSG_SCORING_FAILED, "ok")
+
+    score = int(scored["score"])
+    confidence = float(scored["confidence"])
+    class_name = str(scored["class_name"])
 
     famacha.update(
         {
@@ -412,6 +421,7 @@ def analyze(
             "confidence": confidence,
             "risk_level": risk_level(score),
             "input_mode": mode,
+            "color_metrics": scored.get("metrics"),
         }
     )
     return respond(
