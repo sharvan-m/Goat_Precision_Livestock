@@ -390,8 +390,15 @@ def analyze(
     if run_b is not None:
         try:
             res = run_b(model_input, full_image_bytes=image_bytes)
-            if res and res.get("score") is not None:
+            # Only trust Roboflow Model B if it has genuine confidence (>= 0.55).
+            # A low confidence (< 0.55) indicates the CNN is confused by surrounding fingers/fur.
+            if res and res.get("score") is not None and float(res.get("confidence", 0)) >= 0.55:
                 scored = res
+            elif res and res.get("score") is not None:
+                print(
+                    f"[ANEMIA] Roboflow confidence too low ({float(res.get('confidence', 0)):.1%}) for "
+                    f"class {res.get('class_name')}. Delegating to Colorimeter for accurate tissue grading."
+                )
         except Exception as exc:
             famacha["error"] = str(exc)
             print(f"[ANEMIA] Roboflow Model B returned no match or error: {exc}. Evaluating via Colorimetry.")
