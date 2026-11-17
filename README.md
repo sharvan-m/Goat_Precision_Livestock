@@ -11,7 +11,7 @@
 
 **An enterprise-grade precision livestock framework combining real-time computer vision, multi-animal ByteTrack tracking, automated side-profile view evaluation, biometric morphological weight estimation, and non-invasive ocular FAMACHA anemia diagnostics.**
 
-[Overview](#-1-project-overview) • [Key Features](#-2-key-features) • [Tech Stack](#-3-technology-stack) • [Repository Structure](#-4-repository-structure) • [Architecture](#-5-architecture--methodology) • [Quick Start](#-6-quick-start) • [API Reference](#-7-rest-api-reference) • [References](#-8-references--literature)
+[Overview](#-1-project-overview) • [Key Features](#-2-key-features) • [Tech Stack](#-3-technology-stack) • [Repository Structure](#-4-repository-structure) • [Architecture](#-5-architecture--methodology) • [Quick Start](#-6-quick-start) • [API Reference](#-7-rest-api-reference) • [References](#-9-references--literature)
 
 </div>
 
